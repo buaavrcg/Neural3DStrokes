@@ -1,0 +1,6 @@
+[tool.pyright]
+exclude = [
+    "**/__pycache__",
+    "data",
+    "exp",
+]
