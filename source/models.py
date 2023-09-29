@@ -24,7 +24,7 @@ class Model(nn.Module):
     use_viewdirs: bool = True  # If True, use view directions as input.
     raydist_fn = None  # The curve used for ray dists.
     power_transform_lambda: float = -1.5  # Lambda used in raydist power transformation.
-    ray_shape: str = 'zipnerf'  # The shape of cast rays ('line' or 'cone' or 'cylinder' or 'zipnerf').
+    ray_shape: str = 'line'  # The shape of cast rays ('line' or 'cone' or 'cylinder' or 'zipnerf').
     single_jitter: bool = True  # If True, jitter whole rays instead of samples.
     dilation_multiplier: float = 0.5  # How much to dilate intervals relatively.
     dilation_bias: float = 0.0025  # How much to dilate intervals absolutely.
@@ -32,7 +32,7 @@ class Model(nn.Module):
     single_prop: bool = False  # Use the same PropMLP for all rounds of sampling.
     resample_padding: float = 0.0  # Dirichlet/alpha "padding" on the histogram.
     opaque_background: bool = False  # If true, make the background opaque.
-    std_scale: float = 0.5
+    std_scale: float = 0.5  # Scale the scale of the standard deviation.
     prop_desired_grid_size = [512, 2048]  # The desired grid size for each proposal level.
 
     def __init__(self, config=None, **kwargs):
@@ -235,7 +235,7 @@ class MLP(nn.Module):
     rgb_padding: float = 0.001  # Padding added to the RGB outputs.
     disable_density_normals: bool = False  # If True don't compute normals.
     disable_rgb: bool = False  # If True don't output RGB.
-    warp_fn = None  # The warp function used to warp the input coordinates.
+    warp_fn = 'contract'  # The warp function used to warp the input coordinates.
     grid_num_levels: int = 10
     grid_level_interval: int = 2
     grid_level_dim: int = 4

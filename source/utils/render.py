@@ -149,6 +149,8 @@ def cast_rays(tdist, origins, directions, radii, ray_shape, diag=True, rand=True
         radii: float array, the radii (base radii for cones) of the rays.
         ray_shape: string, the shape of the ray, must be 'cone' or 'cylinder'.
         diag: boolean, whether or not the covariance matrices should be diagonal.
+        rand: boolean, whether or not to use random sampling for zipnerf.
+        std_scale: float, the scale of the standard deviation for zipnerf.
 
     Returns:
         a tuple of arrays of means and covariances:
@@ -162,7 +164,7 @@ def cast_rays(tdist, origins, directions, radii, ray_shape, diag=True, rand=True
     if ray_shape == 'line':
         gaussian_fn = line_to_gaussian
         kwargs = {}
-    if ray_shape == 'cone':
+    elif ray_shape == 'cone':
         gaussian_fn = conical_frustum_to_gaussian
         kwargs = {'diag': diag}
     elif ray_shape == 'cylinder':
@@ -172,7 +174,7 @@ def cast_rays(tdist, origins, directions, radii, ray_shape, diag=True, rand=True
         gaussian_fn = zipnerf_gaussian
         kwargs = {'rand': rand, 'std_scale': std_scale}
     else:
-        raise ValueError("ray_shape must be 'cone' or 'cylinder' or 'zipnerf'")
+        raise ValueError("ray_shape must be 'line' or 'cone' or 'cylinder' or 'zipnerf'")
     
     means, vars, t = gaussian_fn(directions, t0, t1, radii, **kwargs)
     means = means + origins[..., None, None, :]

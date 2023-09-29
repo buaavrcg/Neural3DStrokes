@@ -1,10 +1,11 @@
-Config.exp_name = 'test'
+Config.exp_name = 'test_warp_contract_rayshape_line'
 Config.dataset_loader = 'blender'
 Config.near = 2
 Config.far = 6
 Config.factor = 4
 
 Model.raydist_fn = None
+Model.ray_shape = 'line'
 
 PropMLP.disable_density_normals = True
 PropMLP.disable_rgb = True
