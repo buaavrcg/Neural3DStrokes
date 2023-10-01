@@ -24,7 +24,7 @@ class Model(nn.Module):
     use_viewdirs: bool = True  # If True, use view directions as input.
     raydist_fn = None  # The curve used for ray dists.
     power_transform_lambda: float = -1.5  # Lambda used in raydist power transformation.
-    ray_shape: str = 'line'  # The shape of cast rays ('line' or 'cone' or 'cylinder' or 'zipnerf').
+    use_multi_samples: bool = False  # If True, use multiple samples in zipnerf.
     single_jitter: bool = True  # If True, jitter whole rays instead of samples.
     dilation_multiplier: float = 0.5  # How much to dilate intervals relatively.
     dilation_bias: float = 0.0025  # How much to dilate intervals absolutely.
@@ -133,21 +133,13 @@ class Model(nn.Module):
             tdist = s_to_t(sdist)
 
             # Cast our rays, by turning our distance intervals into Gaussians.
-            means, vars, ts = render.cast_rays(tdist,
-                                               batch['origins'],
-                                               batch['directions'],
-                                               batch['radii'],
-                                               ray_shape=self.ray_shape,
-                                               diag=False,
-                                               rand=self.training,
-                                               std_scale=self.std_scale)
+            coords, ts = render.cast_rays(tdist, batch['origins'], batch['directions'])
 
             # Push our Gaussians through one of our two MLPs.
             mlp = (self.prop_mlp if self.single_prop else
                    self.get_submodule(f'prop_mlp_{i_level}')) if is_prop else self.nerf_mlp
             ray_results = mlp(
-                means,
-                vars,
+                coords,
                 viewdirs=batch['viewdirs'] if self.use_viewdirs else None,
             )
             if self.config.gradient_scaling:
@@ -235,7 +227,10 @@ class MLP(nn.Module):
     rgb_padding: float = 0.001  # Padding added to the RGB outputs.
     disable_density_normals: bool = False  # If True don't compute normals.
     disable_rgb: bool = False  # If True don't output RGB.
+    bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
+
+    # Configs for grid encoder
     grid_num_levels: int = 10
     grid_level_interval: int = 2
     grid_level_dim: int = 4
@@ -248,10 +243,6 @@ class MLP(nn.Module):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-        # Precompute and define viewdir encoding function.
-        self.dir_enc_fn = lambda d: coord.pos_enc(
-            d, min_deg=0, max_deg=self.deg_view, with_identity=True)
-        dim_dir_enc = self.dir_enc_fn(torch.zeros(1, 3)).shape[-1]
         self.grid_num_levels = int(
             np.log(self.grid_disired_resolution / self.grid_base_resolution) /
             np.log(self.grid_level_interval)) + 1
@@ -272,6 +263,11 @@ class MLP(nn.Module):
         )  # Hardcoded to a single channel.
         last_dim = 1 if self.disable_rgb else self.bottleneck_width
 
+        # Precompute and define viewdir encoding function.
+        self.dir_enc_fn = lambda d: coord.pos_enc(
+            d, min_deg=0, max_deg=self.deg_view, with_identity=True)
+        dim_dir_enc = self.dir_enc_fn(torch.zeros(1, 3)).shape[-1]
+
         if not self.disable_rgb:
             # Output of the first part of MLP.
             if self.bottleneck_width > 0:
@@ -290,32 +286,32 @@ class MLP(nn.Module):
                     last_dim_rgb += input_dim_rgb
             self.rgb_layer = nn.Linear(last_dim_rgb, self.num_rgb_channels)
 
-    def predict_density(self, means, vars, no_warp=False):
+    def predict_density(self, coords, no_warp=False):
         """Helper function to output density."""
         # Encode input positions
-        if self.warp_fn is not None and not no_warp:
-            means, vars = coord.track_linearize(self.warp_fn, means, vars)
-            # contract [-2, 2] to [-1, 1]
-            bound = 2
-            means = means / bound
-            vars = vars / bound ** 2
+        if self.warp_fn is None or no_warp:
+            bound = self.bbox_size / 2
+            coords = coords / bound
+        elif self.warp_fn == 'contract':
+            coords = coord.contract(coords)
+            bound = 2.0
+            coords = coords / bound  # contract [-2, 2] to [-1, 1]
+        else:
+            raise NotImplementedError(f'Unknown warp function {self.warp_fn}')
 
-        features = self.encoder(means, bound=1).unflatten(-1, (self.encoder.num_levels, -1))
-        weights = torch.erf(1 / torch.sqrt(8 * vars * self.encoder.grid_sizes**2))
-        features = (features * weights[..., None]).mean(dim=-3).flatten(-2, -1)
+        features = self.encoder(coords, bound=bound)
         x = self.density_layer(features)
         raw_density = x[..., 0]  # Hardcoded to a single channel.
         # Add noise to regularize the density predictions if needed.
         if self.training and (self.density_noise > 0):
             raw_density += self.density_noise * torch.randn_like(raw_density)
-        return raw_density, x, means.mean(dim=-2)
+        return raw_density, x, coords
 
-    def forward(self, means, vars, viewdirs=None, no_warp=False):
+    def forward(self, coords, viewdirs=None, no_warp=False):
         """Evaluate the MLP.
 
         Args:
-            means: [..., n, 3], coordinate means.
-            vars: [..., n, n_cov_dim], coordinate vars.
+            coords: [..., 3], coordinates.
             viewdirs: [..., 3], if not None, this variable will
                 be part of the input to the second part of the MLP concatenated with the
                 output vector of the first part of the MLP. If None, only the first part
@@ -329,18 +325,18 @@ class MLP(nn.Module):
             normals: [..., 3], or None.
         """
         if self.disable_density_normals:
-            raw_density, x, means_contract = self.predict_density(means, vars, no_warp=no_warp)
+            raw_density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
             raw_grad_density = None
             normals = None
         else:
             with torch.enable_grad():
-                means.requires_grad_(True)
-                raw_density, x, means_contract = self.predict_density(means, vars, no_warp=no_warp)
+                coords.requires_grad_(True)
+                raw_density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
                 d_output = torch.ones_like(raw_density,
                                            requires_grad=False,
                                            device=raw_density.device)
                 raw_grad_density = torch.autograd.grad(outputs=raw_density,
-                                                       inputs=means,
+                                                       inputs=coords,
                                                        grad_outputs=d_output,
                                                        create_graph=True,
                                                        retain_graph=True,
@@ -412,7 +408,7 @@ class MLP(nn.Module):
                 hash_levelwise_mean = hash_levelwise_mean.scatter_reduce_( \
                     0, self.encoder.idx.unsqueeze(1), param_sq, reduce='mean', include_self=False)
 
-        return dict(coord=means_contract,
+        return dict(coord=coords_warped,
                     density=density,
                     rgb=rgb,
                     raw_grad_density=raw_grad_density,
