@@ -54,7 +54,7 @@ def train():
     accelerate.utils.set_seed(cfg.seed, device_specific=True)
     # setup model and optimizer
     model = models.Model(config=cfg)
-    optimizer, lr_fn = train_utils.create_optimizer(cfg, model)
+    optimizer, lr_fn = train_utils.create_optimizer(cfg, model.parameters())
 
     # load dataset
     trainset = datasets.load_dataset('train', cfg)
@@ -67,7 +67,7 @@ def train():
                              collate_fn=trainset.collate_fn)
     testloader = DataLoader(np.arange(len(testset)),
                             num_workers=4,
-                            sampler=train_utils.InfiniteSampler(trainset, shuffle=False),
+                            sampler=train_utils.InfiniteSampler(testset, shuffle=False),
                             batch_size=1,
                             persistent_workers=True,
                             collate_fn=testset.collate_fn)
@@ -106,8 +106,7 @@ def train():
     total_steps = 0
     reset_stats = True
     num_steps = cfg.max_steps
-    init_step = 0
-
+    model.step_update(cur_step=step, max_step=num_steps)
     with logging_redirect_tqdm():
         for step in tqdm(range(init_step + 1, num_steps + 1),
                          desc='Training',
@@ -137,9 +136,7 @@ def train():
             # clip gradient by max/norm/nan
             train_utils.clip_gradients(model, accelerator, cfg)
             optimizer.step()
-
-            stats['psnrs'] = image_utils.mse_to_psnr(stats['mses'])
-            stats['psnr'] = stats['psnrs'][-1]
+            model.step_update(cur_step=step, max_step=num_steps)
 
             # Log training summaries. This is put behind a host_id check because in
             # multi-host evaluation, all hosts need to run inference even though we
@@ -198,6 +195,9 @@ def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tenso
     loss = sum(losses.values())
     stats['loss'] = loss.item()
     stats['losses'] = tree_map(lambda x: x.item(), losses)
+
+    stats['psnrs'] = image_utils.mse_to_psnr(stats['mses'])
+    stats['psnr'] = stats['psnrs'][-1]
 
     return loss, stats
 

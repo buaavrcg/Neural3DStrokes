@@ -1,17 +1,16 @@
-Config.exp_name = 'test_aabb'
+Config.exp_name = 'test_stroke'
 Config.dataset_loader = 'blender'
 Config.near = 2
 Config.far = 6
 Config.factor = 4
+Config.train_render_every = 20
 
 Model.raydist_fn = None
+Model.num_levels = 1
+Model.num_nerf_samples = 64
 
-MLP.bbox_size = 3.0
-MLP.warp_fn = None
+StrokeField.bbox_size = 3.0
+StrokeField.warp_fn = None
 
-PropMLP.disable_density_normals = True
 PropMLP.disable_rgb = True
 PropMLP.grid_level_dim = 1
-
-NerfMLP.disable_density_normals = True
-

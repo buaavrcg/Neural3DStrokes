@@ -115,7 +115,7 @@ def learning_rate_decay(step, lr_init, lr_final, max_steps, lr_delay_steps=0, lr
     return delay_rate * log_lerp(step / max_steps, lr_init, lr_final)
 
 
-def create_optimizer(config: configs.Config, model):
+def create_optimizer(config: configs.Config, params):
     """Creates optax optimizer for model training."""
     adam_kwargs = {
         'betas': [config.adam_beta1, config.adam_beta2],
@@ -130,6 +130,6 @@ def create_optimizer(config: configs.Config, model):
     }
 
     lr_fn_main = lambda step: learning_rate_decay(step, **lr_kwargs)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr_init, **adam_kwargs)
+    optimizer = torch.optim.Adam(params, lr=config.lr_init, **adam_kwargs)
 
     return optimizer, lr_fn_main

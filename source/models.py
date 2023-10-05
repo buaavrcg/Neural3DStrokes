@@ -11,6 +11,7 @@ from source.utils import stepfun
 from source.utils import render
 from source.utils import training as train_utils
 from source.gridencoder import GridEncoder
+from source import strokes
 
 
 @gin.configurable
@@ -43,16 +44,20 @@ class Model(nn.Module):
 
         # Construct MLPs. WARNING: Construction order may matter, if MLP weights are
         # being regularized.
-        self.nerf_mlp = NerfMLP()
+        self.nerf = StrokeField()
         if self.single_mlp:
-            self.prop_mlp = self.nerf_mlp
+            self.prop = self.nerf
         elif self.single_prop:
-            self.prop_mlp = PropMLP()
+            self.prop = PropMLP()
         else:
             for i in range(self.num_levels - 1):
                 self.register_module(
                     f'prop_mlp_{i}',
                     PropMLP(grid_disired_resolution=self.prop_desired_grid_size[i]))
+
+    def step_update(self, *args, **kwargs):
+        if hasattr(self.nerf, 'step_update'):
+            self.nerf.step_update(*args, **kwargs)
 
     def forward(self, batch, compute_extras):
         """The mip-NeRF Model.
@@ -136,8 +141,8 @@ class Model(nn.Module):
             coords, ts = render.cast_rays(tdist, batch['origins'], batch['directions'])
 
             # Push our Gaussians through one of our two MLPs.
-            mlp = (self.prop_mlp if self.single_prop else
-                   self.get_submodule(f'prop_mlp_{i_level}')) if is_prop else self.nerf_mlp
+            mlp = (self.prop if self.single_prop else
+                   self.get_submodule(f'prop_mlp_{i_level}')) if is_prop else self.nerf
             ray_results = mlp(
                 coords,
                 viewdirs=batch['viewdirs'] if self.use_viewdirs else None,
@@ -149,7 +154,7 @@ class Model(nn.Module):
             # Get the alpha compositing weights used by volumetric rendering (and losses).
             weights = render.compute_alpha_weights(
                 ray_results['density'],
-                tdist,
+                tdist, 
                 batch['directions'],
                 opaque_background=self.opaque_background,
             )[0]
@@ -210,13 +215,13 @@ class Model(nn.Module):
         return renderings, ray_history
 
 
+@gin.configurable
 class MLP(nn.Module):
     """A PosEnc MLP."""
     bottleneck_width: int = 256  # The width of the bottleneck vector.
     net_depth_viewdirs: int = 2  # The depth of the second part of ML.
     net_width_viewdirs: int = 256  # The width of the second part of MLP.
     skip_layer_dir: int = 0  # Add a skip connection to 2nd MLP after Nth layers.
-    num_rgb_channels: int = 3  # The number of RGB channels.
     deg_view: int = 4  # Degree of encoding for viewdirs or refdirs.
     use_directional_enc: bool = False  # If True, use IDE to encode directions.
     bottleneck_noise: float = 0.0  # Std. deviation of training noise added to bottleneck.
@@ -225,13 +230,12 @@ class MLP(nn.Module):
     rgb_premultiplier: float = 1.  # Premultiplier on RGB before activation.
     rgb_bias: float = 0.  # The shift added to raw colors pre-activation.
     rgb_padding: float = 0.001  # Padding added to the RGB outputs.
-    disable_density_normals: bool = False  # If True don't compute normals.
+    disable_density_normals: bool = True  # If True don't compute normals.
     disable_rgb: bool = False  # If True don't output RGB.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
 
     # Configs for grid encoder
-    grid_num_levels: int = 10
     grid_level_interval: int = 2
     grid_level_dim: int = 4
     grid_base_resolution: int = 16
@@ -284,10 +288,10 @@ class MLP(nn.Module):
                 last_dim_rgb = self.net_width_viewdirs
                 if i == self.skip_layer_dir:
                     last_dim_rgb += input_dim_rgb
-            self.rgb_layer = nn.Linear(last_dim_rgb, self.num_rgb_channels)
+            self.rgb_layer = nn.Linear(last_dim_rgb, 3)
 
     def predict_density(self, coords, no_warp=False):
-        """Helper function to output density."""
+        """Helper function to output density and rgb feature."""
         # Encode input positions
         if self.warp_fn is None or no_warp:
             bound = self.bbox_size / 2
@@ -299,7 +303,7 @@ class MLP(nn.Module):
         else:
             raise NotImplementedError(f'Unknown warp function {self.warp_fn}')
 
-        features = self.encoder(coords, bound=bound)
+        features = self.encoder(coords, bound=1)
         x = self.density_layer(features)
         raw_density = x[..., 0]  # Hardcoded to a single channel.
         # Add noise to regularize the density predictions if needed.
@@ -307,7 +311,7 @@ class MLP(nn.Module):
             raw_density += self.density_noise * torch.randn_like(raw_density)
         return raw_density, x, coords
 
-    def forward(self, coords, viewdirs=None, no_warp=False):
+    def forward(self, coords, viewdirs=None, deltas=None, no_warp=False):
         """Evaluate the MLP.
 
         Args:
@@ -320,13 +324,12 @@ class MLP(nn.Module):
             no_warp: bool, if True, don't warp the input coordinates.
 
         Returns:
-            rgb: [..., num_rgb_channels].
+            rgb: [..., 3].
             density: [...].
             normals: [..., 3], or None.
         """
         if self.disable_density_normals:
             raw_density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
-            raw_grad_density = None
             normals = None
         else:
             with torch.enable_grad():
@@ -411,7 +414,6 @@ class MLP(nn.Module):
         return dict(coord=coords_warped,
                     density=density,
                     rgb=rgb,
-                    raw_grad_density=raw_grad_density,
                     normals=normals,
                     hash_levelwise_mean=hash_levelwise_mean)
 
@@ -424,6 +426,146 @@ class NerfMLP(MLP):
 @gin.configurable
 class PropMLP(MLP):
     pass
+
+
+
+@gin.configurable
+class StrokeField(nn.Module):
+    """A vector stroke field."""
+    shape_type: str = 'sphere'  # The type of shape function to use.
+    color_type: str = 'constant'  # The type of color function to use.
+    max_num_strokes: int = 100  # The maximum number of strokes.
+    max_opt_strokes: int = 100  # The maximum number of strokes to optimize at the same time.
+    dilation_scale: float = 1e-2  # How much to dilate the sdf soft boundary.
+    delta_scale: float = 1.0  # How much to change the new color
+    disable_density_normals: bool = True  # If True don't compute normals.
+    bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
+    warp_fn = 'contract'  # The warp function used to warp the input coordinates.
+    
+    def __init__(self, **kwargs):
+        super().__init__()
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+            
+        self.sdf, self.d_shape, self.shape_param_ranges, \
+            self.shape_param_sampler = strokes.stroke_sdf(self.shape_type)
+        self.color, self.d_color, self.color_param_ranges, \
+            self.color_param_sampler = strokes.stroke_color(self.color_type)
+        self.shape_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_shape))
+        self.color_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_color))
+        # self.alpha_params = nn.Parameter(torch.ones(self.max_num_strokes, 1), False)
+        self.step = 0
+        self.fixed_step = 0
+        
+    def clip_params(self):
+        """Clip the parameters to the valid range."""
+        for i, (p_min, p_max) in enumerate(self.shape_param_ranges):
+            if p_min is not None or p_max is not None:
+                self.shape_params.data[:, i].clamp_(p_min, p_max)
+        for i, (p_min, p_max) in enumerate(self.color_param_ranges):
+            if p_min is not None or p_max is not None:
+                self.color_params.data[:, i].clamp_(p_min, p_max)
+        # self.alpha_params.data.clamp_(0, 1)
+            
+    def step_update(self, cur_step, max_step):
+        """Update the stroke field at the current step."""
+        steps_per_stroke = max_step // self.max_num_strokes
+        assert steps_per_stroke > 10, f'Too few steps per stroke: {steps_per_stroke}'
+        step = min(1 + self.max_num_strokes * cur_step // (max_step - steps_per_stroke), 
+                   self.max_num_strokes)
+        if step > self.step:
+            # Sample new parameters for the new strokes.
+            for i in range(self.step, step):
+                shape_params = self.shape_param_sampler()
+                color_params = self.color_param_sampler()
+                self.shape_params.data[i] = shape_params.to(self.shape_params.device)
+                self.color_params.data[i] = color_params.to(self.color_params.device)
+            print(f'Update stroke field {self.step} -> {step}')
+        self.step = step
+        self.fixed_step = max(self.fixed_step, step - self.max_opt_strokes)
+        self.clip_params()
+    
+    def predict_density(self, coords, no_warp=False):
+        """Helper function to output density and rgb."""
+        # Encode input positions
+        if self.warp_fn is None or no_warp:
+            bound = self.bbox_size / 2
+            coords = coords / bound
+        elif self.warp_fn == 'contract':
+            coords = coord.contract(coords)
+            bound = 2.0
+            coords = coords / bound  # contract [-2, 2] to [-1, 1]
+        else:
+            raise NotImplementedError(f'Unknown warp function {self.warp_fn}')
+
+        # Composite strokes to get the final density and color.
+        h_density = torch.zeros_like(coords[..., 0])
+        h_color = torch.zeros_like(coords[..., 0:3])
+        for i in range(self.step):
+            shape_params = self.shape_params[i]
+            color_params = self.color_params[i]
+            # alpha_params = self.alpha_params[i]
+            
+            # Deatch parameters if they are not optimized
+            if i < self.fixed_step:
+                shape_params = shape_params.detach()
+                color_params = color_params.detach()
+                # alpha_params = alpha_params.detach()
+            
+            sdf, base_coords = self.sdf(coords, shape_params)
+            color = self.color(base_coords, color_params, sdf, shape_params)
+            density = F.softplus(-sdf / self.dilation_scale) # * alpha_params
+            # h_density = h_density + density
+            # h_density = torch.maximum(h_density, density)
+            t = (1 - torch.exp(-self.delta_scale * density))
+            h_density = (1 - t) * h_density + t * density
+            h_color = (1 - t[..., None]) * h_color + t[..., None] * color
+            
+        return h_density, h_color, coords
+    
+    def forward(self, coords, viewdirs=None, no_warp=False):
+        """Evaluate the stroke field.
+
+        Args:
+            coords: [..., 3], coordinates.
+            viewdirs: [..., 3], if not None, this variable is the view direction.
+            no_warp: bool, if True, don't warp the input coordinates.
+
+        Returns:
+            rgb: [..., 3].
+            density: [...].
+            normals: [..., 3], or None.
+        """
+        if self.disable_density_normals:
+            density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
+            grad_density = None
+            normals = None
+        else:
+            with torch.enable_grad():
+                coords.requires_grad_(True)
+                density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
+                d_output = torch.ones_like(density,
+                                           requires_grad=False,
+                                           device=density.device)
+                grad_density = torch.autograd.grad(outputs=density,
+                                                       inputs=coords,
+                                                       grad_outputs=d_output,
+                                                       create_graph=True,
+                                                       retain_graph=True,
+                                                       only_inputs=True)[0]
+            grad_density = grad_density.mean(-2)
+            # Compute normal vectors as negative normalized density gradient.
+            # We normalize the gradient of raw (pre-activation) density because
+            # it's the same as post-activation density, but is more numerically stable
+            # when the activation function has a steep or flat gradient.
+            normals = -torch.nn.functional.normalize(grad_density, dim=-1, eps=torch.finfo(x.dtype).eps)
+            
+        rgb = x
+        return dict(coord=coords_warped,
+                    density=density,
+                    rgb=rgb,
+                    normals=normals)
+
 
 
 @torch.no_grad()

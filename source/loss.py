@@ -46,7 +46,7 @@ def interlevel_loss(ray_history, config : configs.Config):
     last_ray_results = ray_history[-1]
     c = last_ray_results['sdist'].detach()
     w = last_ray_results['weights'].detach()
-    loss_interlevel = 0.
+    loss_interlevel = torch.tensor(0., device=c.device)
     for ray_results in ray_history[:-1]:
         cp = ray_results['sdist']
         wp = ray_results['weights']
@@ -60,7 +60,7 @@ def anti_interlevel_loss(ray_history, config : configs.Config):
     c = last_ray_results['sdist'].detach()
     w = last_ray_results['weights'].detach()
     w_normalize = w / (c[..., 1:] - c[..., :-1])
-    loss_anti_interlevel = 0.
+    loss_anti_interlevel = torch.tensor(0., device=c.device)
     for i, ray_results in enumerate(ray_history[:-1]):
         cp = ray_results['sdist']
         wp = ray_results['weights']
@@ -98,7 +98,11 @@ def opacity_reg_loss(renderings, config):
 
 
 def hash_decay_loss(ray_history, config):
-    total_loss = 0.
+    last_ray_results = ray_history[-1]
+    total_loss = torch.tensor(0., device=last_ray_results['sdist'].device)
     for ray_results in ray_history:
-        total_loss += config.hash_decay_mult * ray_results['hash_levelwise_mean'].mean()
+        if 'hash_levelwise_mean' not in ray_results:
+            continue
+        hash_levelwise_mean = ray_results['hash_levelwise_mean'].mean()
+        total_loss += config.hash_decay_mult * hash_levelwise_mean
     return total_loss
