@@ -401,7 +401,7 @@ class Blender(Dataset):
 
         rgb, alpha = self.images[..., :3], self.images[..., -1:]
         self.images = rgb * alpha + (1. - alpha)  # Use a white background.
-        self.alphas = self.images[..., -1]  # Load alpha mask.
+        self.alphas = alpha[..., 0]  # Load alpha mask.
         self.height, self.width = self.images.shape[1:3]
         self.camtoworlds = np.stack(cams, axis=0)
         self.focal = .5 * self.width / np.tan(.5 * float(meta['camera_angle_x']))

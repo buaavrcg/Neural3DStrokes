@@ -434,10 +434,11 @@ class StrokeField(nn.Module):
     """A vector stroke field."""
     shape_type: str = 'sphere'  # The type of shape function to use.
     color_type: str = 'constant'  # The type of color function to use.
-    max_num_strokes: int = 100  # The maximum number of strokes.
-    max_opt_strokes: int = 100  # The maximum number of strokes to optimize at the same time.
-    dilation_scale: float = 1e-2  # How much to dilate the sdf soft boundary.
-    delta_scale: float = 1.0  # How much to change the new color
+    max_num_strokes: int = 500  # The maximum number of strokes.
+    max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
+    max_density: float = 5e1  # The maximum density of the strokes.
+    sdf_delta: float = 0.1  # How much to dilate the sdf boundary.
+    sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
     disable_density_normals: bool = True  # If True don't compute normals.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
@@ -453,7 +454,7 @@ class StrokeField(nn.Module):
             self.color_param_sampler = strokes.stroke_color(self.color_type)
         self.shape_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_shape))
         self.color_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_color))
-        # self.alpha_params = nn.Parameter(torch.ones(self.max_num_strokes, 1), False)
+        self.alpha_params = nn.Parameter(torch.ones(self.max_num_strokes, 1))
         self.step = 0
         self.fixed_step = 0
         
@@ -465,7 +466,7 @@ class StrokeField(nn.Module):
         for i, (p_min, p_max) in enumerate(self.color_param_ranges):
             if p_min is not None or p_max is not None:
                 self.color_params.data[:, i].clamp_(p_min, p_max)
-        # self.alpha_params.data.clamp_(0, 1)
+        self.alpha_params.data.clamp_(0, 1)
             
     def step_update(self, cur_step, max_step):
         """Update the stroke field at the current step."""
@@ -474,9 +475,10 @@ class StrokeField(nn.Module):
         step = min(1 + self.max_num_strokes * cur_step // (max_step - steps_per_stroke), 
                    self.max_num_strokes)
         if step > self.step:
+            train_frac = cur_step / max_step
             # Sample new parameters for the new strokes.
             for i in range(self.step, step):
-                shape_params = self.shape_param_sampler()
+                shape_params = self.shape_param_sampler(train_frac)
                 color_params = self.color_param_sampler()
                 self.shape_params.data[i] = shape_params.to(self.shape_params.device)
                 self.color_params.data[i] = color_params.to(self.color_params.device)
@@ -501,26 +503,38 @@ class StrokeField(nn.Module):
         # Composite strokes to get the final density and color.
         h_density = torch.zeros_like(coords[..., 0])
         h_color = torch.zeros_like(coords[..., 0:3])
+        h_color_weight = torch.ones_like(coords[..., 0])
+        density_params = torch.clamp(self.alpha_params, min=0) * self.max_density
         for i in range(self.step):
             shape_params = self.shape_params[i]
             color_params = self.color_params[i]
-            # alpha_params = self.alpha_params[i]
+            density = density_params[i]
             
             # Deatch parameters if they are not optimized
             if i < self.fixed_step:
                 shape_params = shape_params.detach()
                 color_params = color_params.detach()
-                # alpha_params = alpha_params.detach()
+                density = density.detach()
             
             sdf, base_coords = self.sdf(coords, shape_params)
             color = self.color(base_coords, color_params, sdf, shape_params)
-            density = F.softplus(-sdf / self.dilation_scale) # * alpha_params
+            
+            if self.training or self.sdf_delta_eval > 0.0:
+                sdf_delta = self.sdf_delta if self.training else self.sdf_delta_eval
+                t = (torch.clamp(-sdf, -sdf_delta, sdf_delta) / sdf_delta + 1) * 0.5
+            else:
+                t = (sdf <= 0).to(sdf.dtype)
+            # density = F.softplus(-sdf / self.dilation_scale) * torch.clamp(alpha_params, 0, 1)
+            
             # h_density = h_density + density
             # h_density = torch.maximum(h_density, density)
-            t = (1 - torch.exp(-self.delta_scale * density))
             h_density = (1 - t) * h_density + t * density
             h_color = (1 - t[..., None]) * h_color + t[..., None] * color
-            
+            h_color_weight = (1 - t) * h_color_weight
+                
+        # re-normalize the color
+        h_color = torch.clamp(h_color / (1 + 1e-6 - h_color_weight[..., None]), 0, 1)
+        
         return h_density, h_color, coords
     
     def forward(self, coords, viewdirs=None, no_warp=False):

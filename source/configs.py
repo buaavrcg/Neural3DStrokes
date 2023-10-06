@@ -62,14 +62,15 @@ class Config:
     huber_delta: float = 1.0  # The threshold to change between delta-scaled L1 and L2 loss.
     data_loss_mult: float = 1.0  # Mult for the finest data term in the loss.
     data_coarse_loss_mult: float = 0.  # Multiplier for the coarser data terms.
+    mask_loss_mult: float = 0.  # Multiplier for the mask loss.
     interlevel_loss_mult: float = 0.0  # Mult. for the loss on the proposal MLP.
     anti_interlevel_loss_mult: float = 0.01  # Mult. for the loss on the proposal MLP.
     pulse_width = [0.03, 0.003]  # Mult. for the loss on the proposal MLP.
     hash_decay_mult: float = 0.1  # Mult. for the loss on the hash feature decay.
     
     lr_init: float = 0.01  # The initial learning rate.
-    lr_final: float = 0.001  # The final learning rate.
-    lr_delay_steps: int = 5000  # The number of "warmup" learning steps.
+    lr_final: float = 0.005  # The final learning rate.
+    lr_delay_steps: int = 0  # The number of "warmup" learning steps.
     lr_delay_mult: float = 1e-8  # How much sever the "warmup" should be.
     adam_beta1: float = 0.9  # Adam's beta2 hyperparameter.
     adam_beta2: float = 0.99  # Adam's beta2 hyperparameter.

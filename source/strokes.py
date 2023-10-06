@@ -11,7 +11,9 @@ def _broadcast_params(p: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
 def unit_sphere(x: torch.Tensor, p: torch.Tensor):
     """SDF for a unit sphere."""
-    return torch.norm(x, dim=-1) - 1.
+    x = torch.square(x)
+    d = torch.sqrt(x[..., 0] + x[..., 1] + x[..., 2] + 1e-8)
+    return d - 1.
 
 
 def unit_cube(x: torch.Tensor, p: torch.Tensor):
@@ -49,9 +51,9 @@ def stroke_sdf(shape_type: str):
         enable_singlescale, enable_multiscale = sdfs[shape_type]
 
     if enable_singlescale:
-        param_ranges += [(0, 1)]
+        param_ranges += [(1e-2, 0.5)]
     elif enable_multiscale:
-        param_ranges += [(0, 1)] * 3
+        param_ranges += [(1e-2, 0.5)] * 3
     if enable_rotation:
         param_ranges += [(-torch.pi, torch.pi)] * 3
     if enable_translation:
@@ -77,16 +79,18 @@ def stroke_sdf(shape_type: str):
             p = p[..., :-3]
         return base_sdf(x, p), x
 
-    def composite_sampler():
+    def composite_sampler(train_frac):
         params = [sampler()] if sampler is not None else []
+        scale_min = 0.05 + 0.08 * (1 - train_frac)
+        scale_max = 0.05 + 0.15 * (1 - train_frac)
         if enable_singlescale:
-            params.append(torch.rand(1) * 0.3)
+            params.append(torch.rand(1) * (scale_max - scale_min) + scale_min)
         elif enable_multiscale:
-            params.append(torch.rand(3) * 0.3)
+            params.append(torch.rand(3) * (scale_max - scale_min) + scale_min)
         if enable_rotation:
             params.append((torch.rand(3) * 2 - 1) * torch.pi)
         if enable_translation:
-            params.append((torch.rand(3) * 2 - 1) * 0.2)
+            params.append((torch.rand(3) * 2 - 1) * 0.4)
         return torch.cat(params, dim=-1)
 
     return composite_sdf, dim_shape, param_ranges, composite_sampler

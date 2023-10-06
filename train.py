@@ -309,6 +309,8 @@ def train_eval(test_batch, model, metric_harness, accelerator, cfg, summary_writ
     # function to convert image for tensorboard
     tb_process_fn = lambda x: x.transpose(2, 0, 1) if len(x.shape) == 3 else x[None]
     summary_writer.add_image('test_true_color', tb_process_fn(test_batch['rgb']), step)
+    if 'alphas' in test_batch:
+        summary_writer.add_image('test_true_alpha', tb_process_fn(test_batch['alphas'][..., None]), step)
     for k, v in vis_suite.items():
         summary_writer.add_image('test_output_' + k, tb_process_fn(v), step)
 

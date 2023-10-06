@@ -4,11 +4,30 @@ import numpy as np
 from source import configs
 from source.utils import stepfun
 
+def _get_data_loss(residual_sq, residual_abs, config):
+    if config.data_loss_type == 'mse':
+        # Mean-squared error (L2) loss.
+        data_loss = residual_sq
+    elif config.data_loss_type == 'l1':
+        # Mean-absolute error (L1) loss.
+        data_loss = residual_abs
+    elif config.data_loss_type == 'charb':
+        # Charbonnier loss.
+        data_loss = torch.sqrt(residual_sq + config.charb_padding**2)
+    elif config.data_loss_type == 'huber':
+        data_loss = torch.where(residual_abs < config.huber_delta, 0.5 * residual_sq,
+                                config.huber_delta * (residual_abs - 0.5 * config.huber_delta))
+    else:
+        assert False, f'Unknown data loss type {config.data_loss_type}'
+    return data_loss
+
 
 def compute_data_loss(batch, renderings, config : configs.Config):
     """Computes data loss terms for RGB, normal, and depth outputs."""
     data_losses = []
+    mask_losses = []
     stats = collections.defaultdict(lambda: [])
+    use_mask_loss = config.mask_loss_mult > 0 and 'alphas' in batch
 
     for rendering in renderings:
         residual = rendering['rgb'] - batch['rgb'][..., :3]
@@ -17,24 +36,24 @@ def compute_data_loss(batch, renderings, config : configs.Config):
         stats['mses'].append(residual_sq.mean().item())
         stats['maes'].append(residual_abs.mean().item())
 
-        if config.data_loss_type == 'mse':
-            # Mean-squared error (L2) loss.
-            data_loss = residual_sq
-        elif config.data_loss_type == 'l1':
-            # Mean-absolute error (L1) loss.
-            data_loss = residual_abs
-        elif config.data_loss_type == 'charb':
-            # Charbonnier loss.
-            data_loss = torch.sqrt(residual_sq + config.charb_padding**2)
-        elif config.data_loss_type == 'huber':
-            data_loss = torch.where(residual_abs < config.huber_delta, 0.5 * residual_sq,
-                                    config.huber_delta * (residual_abs - 0.5 * config.huber_delta))
-        else:
-            assert False, f'Unknown data loss type {config.data_loss_type}'
+        data_loss = _get_data_loss(residual_sq, residual_abs, config)
         data_losses.append(data_loss.mean())
+        
+        if use_mask_loss:
+            mask_residual = rendering['acc'] - batch['alphas']
+            mask_residual_sq = torch.square(mask_residual)
+            mask_residual_abs = torch.abs(mask_residual)
+            stats['mask_mses'].append(mask_residual_sq.mean().item())
+            stats['mask_maes'].append(mask_residual_abs.mean().item())
+            
+            mask_loss = _get_data_loss(mask_residual_sq, mask_residual_abs, config)
+            mask_losses.append(mask_loss.mean())
 
     loss = (config.data_coarse_loss_mult * sum(data_losses[:-1]) +
             config.data_loss_mult * data_losses[-1])
+    
+    if use_mask_loss:
+        loss += config.mask_loss_mult * mask_losses[-1]
 
     stats = {k: np.array(stats[k]) for k in stats}
     return loss, stats
