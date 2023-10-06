@@ -154,7 +154,7 @@ class Model(nn.Module):
             # Get the alpha compositing weights used by volumetric rendering (and losses).
             weights = render.compute_alpha_weights(
                 ray_results['density'],
-                tdist, 
+                tdist,
                 batch['directions'],
                 opaque_background=self.opaque_background,
             )[0]
@@ -428,7 +428,6 @@ class PropMLP(MLP):
     pass
 
 
-
 @gin.configurable
 class StrokeField(nn.Module):
     """A vector stroke field."""
@@ -439,15 +438,16 @@ class StrokeField(nn.Module):
     max_density: float = 5e1  # The maximum density of the strokes.
     sdf_delta: float = 0.1  # How much to dilate the sdf boundary.
     sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
+    use_sigmoid_clamping: bool = False  # If True, use sigmoid for soft clamping.
     disable_density_normals: bool = True  # If True don't compute normals.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
-    
+
     def __init__(self, **kwargs):
         super().__init__()
         for k, v in kwargs.items():
             setattr(self, k, v)
-            
+
         self.sdf, self.d_shape, self.shape_param_ranges, \
             self.shape_param_sampler = strokes.stroke_sdf(self.shape_type)
         self.color, self.d_color, self.color_param_ranges, \
@@ -457,7 +457,7 @@ class StrokeField(nn.Module):
         self.alpha_params = nn.Parameter(torch.ones(self.max_num_strokes, 1))
         self.step = 0
         self.fixed_step = 0
-        
+
     def clip_params(self):
         """Clip the parameters to the valid range."""
         for i, (p_min, p_max) in enumerate(self.shape_param_ranges):
@@ -467,12 +467,12 @@ class StrokeField(nn.Module):
             if p_min is not None or p_max is not None:
                 self.color_params.data[:, i].clamp_(p_min, p_max)
         self.alpha_params.data.clamp_(0, 1)
-            
+
     def step_update(self, cur_step, max_step):
         """Update the stroke field at the current step."""
         steps_per_stroke = max_step // self.max_num_strokes
         assert steps_per_stroke > 10, f'Too few steps per stroke: {steps_per_stroke}'
-        step = min(1 + self.max_num_strokes * cur_step // (max_step - steps_per_stroke), 
+        step = min(1 + self.max_num_strokes * cur_step // (max_step - steps_per_stroke),
                    self.max_num_strokes)
         if step > self.step:
             train_frac = cur_step / max_step
@@ -486,7 +486,7 @@ class StrokeField(nn.Module):
         self.step = step
         self.fixed_step = max(self.fixed_step, step - self.max_opt_strokes)
         self.clip_params()
-    
+
     def predict_density(self, coords, no_warp=False):
         """Helper function to output density and rgb."""
         # Encode input positions
@@ -509,34 +509,37 @@ class StrokeField(nn.Module):
             shape_params = self.shape_params[i]
             color_params = self.color_params[i]
             density = density_params[i]
-            
+
             # Deatch parameters if they are not optimized
             if i < self.fixed_step:
                 shape_params = shape_params.detach()
                 color_params = color_params.detach()
                 density = density.detach()
-            
+
             sdf, base_coords = self.sdf(coords, shape_params)
             color = self.color(base_coords, color_params, sdf, shape_params)
-            
+
             if self.training or self.sdf_delta_eval > 0.0:
                 sdf_delta = self.sdf_delta if self.training else self.sdf_delta_eval
-                t = (torch.clamp(-sdf, -sdf_delta, sdf_delta) / sdf_delta + 1) * 0.5
+                if self.use_sigmoid_clamping:
+                    t = torch.sigmoid(-sdf * (4.0 / sdf_delta))
+                else:
+                    t = (torch.clamp(-sdf, -sdf_delta, sdf_delta) / sdf_delta + 1) * 0.5
             else:
                 t = (sdf <= 0).to(sdf.dtype)
             # density = F.softplus(-sdf / self.dilation_scale) * torch.clamp(alpha_params, 0, 1)
-            
+
             # h_density = h_density + density
             # h_density = torch.maximum(h_density, density)
             h_density = (1 - t) * h_density + t * density
             h_color = (1 - t[..., None]) * h_color + t[..., None] * color
             h_color_weight = (1 - t) * h_color_weight
-                
+
         # re-normalize the color
         h_color = torch.clamp(h_color / (1 + 1e-6 - h_color_weight[..., None]), 0, 1)
-        
+
         return h_density, h_color, coords
-    
+
     def forward(self, coords, viewdirs=None, no_warp=False):
         """Evaluate the stroke field.
 
@@ -558,28 +561,23 @@ class StrokeField(nn.Module):
             with torch.enable_grad():
                 coords.requires_grad_(True)
                 density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
-                d_output = torch.ones_like(density,
-                                           requires_grad=False,
-                                           device=density.device)
+                d_output = torch.ones_like(density, requires_grad=False, device=density.device)
                 grad_density = torch.autograd.grad(outputs=density,
-                                                       inputs=coords,
-                                                       grad_outputs=d_output,
-                                                       create_graph=True,
-                                                       retain_graph=True,
-                                                       only_inputs=True)[0]
+                                                   inputs=coords,
+                                                   grad_outputs=d_output,
+                                                   create_graph=True,
+                                                   retain_graph=True,
+                                                   only_inputs=True)[0]
             grad_density = grad_density.mean(-2)
             # Compute normal vectors as negative normalized density gradient.
             # We normalize the gradient of raw (pre-activation) density because
             # it's the same as post-activation density, but is more numerically stable
             # when the activation function has a steep or flat gradient.
-            normals = -torch.nn.functional.normalize(grad_density, dim=-1, eps=torch.finfo(x.dtype).eps)
-            
-        rgb = x
-        return dict(coord=coords_warped,
-                    density=density,
-                    rgb=rgb,
-                    normals=normals)
+            normals = -torch.nn.functional.normalize(
+                grad_density, dim=-1, eps=torch.finfo(x.dtype).eps)
 
+        rgb = x
+        return dict(coord=coords_warped, density=density, rgb=rgb, normals=normals)
 
 
 @torch.no_grad()

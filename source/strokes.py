@@ -36,7 +36,7 @@ def rotate(x: torch.Tensor, r: torch.Tensor):
         torch.stack([-sv, su * cv, cu * cv], dim=-1),
     ], dim=-2)
 
-    return torch.einsum('...ij,...j->...i', rot.T, x)
+    return torch.einsum('...ij,...i->...j', rot, x)
 
 
 def stroke_sdf(shape_type: str):
@@ -44,7 +44,9 @@ def stroke_sdf(shape_type: str):
     sdfs = {
         'sphere': (unit_sphere, [], None, True, False, True, False),
         'ellipsoid': (unit_sphere, [], None, True, True, False, True),
+        'aacube': (unit_cube, [], None, True, False, True, False),
         'cube': (unit_cube, [], None, True, True, True, False),
+        'aabb': (unit_cube, [], None, True, False, False, True),
         'obb': (unit_cube, [], None, True, True, False, True),
     }
     base_sdf, param_ranges, sampler, enable_translation, enable_rotation, \

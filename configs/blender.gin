@@ -1,4 +1,4 @@
-Config.exp_name = 'test_stroke_15_maskloss_mult=0.01'
+Config.exp_name = 'test_stroke_20_aacube'
 Config.dataset_loader = 'blender'
 Config.near = 2
 Config.far = 6
@@ -14,6 +14,8 @@ Model.num_nerf_samples = 32
 
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
+StrokeField.shape_type = 'aacube'
+StrokeField.use_sigmoid_clamping = False
 
 PropMLP.disable_rgb = True
 PropMLP.grid_level_dim = 1
