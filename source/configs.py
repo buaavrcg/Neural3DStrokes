@@ -63,6 +63,8 @@ class Config:
     data_loss_mult: float = 1.0  # Mult for the finest data term in the loss.
     data_coarse_loss_mult: float = 0.  # Multiplier for the coarser data terms.
     mask_loss_mult: float = 0.  # Multiplier for the mask loss.
+    sinkhorn_loss_mult: float = 0.0  # Mult for the sinkohrn loss.
+    sinkhorn_patch_size: int = 24  # Patch size for the sinkhorn loss.
     interlevel_loss_mult: float = 0.0  # Mult. for the loss on the proposal MLP.
     anti_interlevel_loss_mult: float = 0.01  # Mult. for the loss on the proposal MLP.
     pulse_width = [0.03, 0.003]  # Mult. for the loss on the proposal MLP.
