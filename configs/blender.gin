@@ -1,4 +1,4 @@
-Config.exp_name = 'test_stroke_15_maskloss_mult=0.01'
+Config.exp_name = 'test_base'
 Config.dataset_loader = 'blender'
 Config.near = 2
 Config.far = 6
@@ -6,6 +6,9 @@ Config.factor = 2
 Config.train_render_every = 200
 Config.max_steps = 50000
 Config.mask_loss_mult = 0.01
+Config.lr_init=0.005
+Config.lr_final=0.001
+Config.lr_delay_steps=500
 
 Model.raydist_fn = None
 Model.num_levels = 2
@@ -15,5 +18,7 @@ Model.num_nerf_samples = 32
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
 
+MLP.bbox_size = 3.0
+MLP.warp_fn = None
 PropMLP.disable_rgb = True
 PropMLP.grid_level_dim = 1

@@ -61,6 +61,8 @@ class Config:
     charb_padding: float = 0.001  # The padding used for Charbonnier loss.
     huber_delta: float = 1.0  # The threshold to change between delta-scaled L1 and L2 loss.
     data_loss_mult: float = 1.0  # Mult for the finest data term in the loss.
+    sinkhorn_loss_mult: float = 0.0  # Mult for the sinkhorn loss.
+    sinkhorn_patch_size: int = 24  # Patch size for the sinkhorn loss.
     data_coarse_loss_mult: float = 0.  # Multiplier for the coarser data terms.
     mask_loss_mult: float = 0.  # Multiplier for the mask loss.
     interlevel_loss_mult: float = 0.0  # Mult. for the loss on the proposal MLP.
