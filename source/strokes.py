@@ -93,7 +93,11 @@ def stroke_sdf(shape_type: str):
             params.append((torch.rand(3) * 2 - 1) * torch.pi)
         if enable_translation:
             params.append((torch.rand(3) * 2 - 1) * 0.4)
-        return torch.cat(params, dim=-1)
+            
+        if len(params) > 0:
+            return torch.cat(params, dim=-1)
+        else:
+            return torch.empty(0)
 
     return composite_sdf, dim_shape, param_ranges, composite_sampler
 
@@ -115,11 +119,11 @@ def gradient_color(x: torch.Tensor, p: torch.Tensor):
 def stroke_color(color_type: str):
     """Get the color function, color params dim, and param sampler for a color type."""
     colors = {
-        'constant': (lambda x, c: c, [(0, 1)] * 3, lambda: torch.rand(3), False, False),
-        'gradient': (gradient_color, 
-                     [(None, None)] * 6 + [(0, 1)] * 6, 
-                     lambda: torch.cat([torch.rand(6) * 2 - 1, torch.rand(6)], dim=-1), 
-                     False, False),
+        'constant_rgb': (lambda x, c: c, [(0, 1)] * 3, lambda: torch.rand(3), False, False),
+        'gradient_rgb': (gradient_color, 
+                        [(None, None)] * 6 + [(0, 1)] * 6, 
+                        lambda: torch.cat([torch.rand(6) * 2 - 1, torch.rand(6)], dim=-1), 
+                        False, False),
     }
     color_fn, param_ranges, sampler, use_sdf, use_shape_params = colors[color_type]
     dim_color = len(param_ranges)

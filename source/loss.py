@@ -44,20 +44,20 @@ def _compute_sinkhorn_loss(C, epsilon, niter, mass_x, mass_y):
     nu = (mass_y / mass_y.sum(dim=-1, keepdim=True)).to(C.device)
 
     def M(u, v):
-        "Modified cost for logarithmic updates"
-        "$M_{ij} = (-c_{ij} + u_i + v_j) / \epsilon$"
+        """Modified cost for logarithmic updates
+        $M_{ij} = (-c_{ij} + u_i + v_j) / \epsilon$"""
         return (-C + u.unsqueeze(2) + v.unsqueeze(1)) / epsilon
 
     def lse(A):
         "log-sum-exp"
-        return torch.log(torch.exp(A).sum(2, keepdim=True) + 1e-6)  # add 10^-6 to prevent NaN
+        return torch.logsumexp(A, dim=2, keepdim=True)
 
     # Actual Sinkhorn loop ......................................................................
     u, v, err = 0. * mu, 0. * nu, 0.
 
     for i in range(niter):
         u = epsilon * (torch.log(mu) - lse(M(u, v)).squeeze()) + u
-        v = epsilon * (torch.log(nu) - lse(M(u, v).transpose(dim0=1, dim1=2)).squeeze()) + v
+        v = epsilon * (torch.log(nu) - lse(M(u, v).transpose(1, 2)).squeeze()) + v
 
     pi = torch.exp(M(u, v))  # Transport plan pi = diag(a)*K*diag(b)
     cost = torch.sum(pi * C, dim=[1, 2])  # Sinkhorn cost
