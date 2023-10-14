@@ -56,7 +56,7 @@ class _stroke_fn(Function):
                 color_id: int,
                 sdf_delta: float,
                 use_sigmoid_clamping: bool = False,
-                no_sdf: bool = False):
+                no_sdf: bool = True):
         """Compute the SDF value and the base coordinates of a batch of strokes.
 
         Args:
@@ -89,15 +89,16 @@ class _stroke_fn(Function):
         sdf_shape = (x.shape[0], num_strokes)
         alpha_output = torch.empty(alpha_shape, dtype=x.dtype, device=x.device)
         color_output = torch.empty(color_shape, dtype=x.dtype, device=x.device)
-        sdf_output = None if no_sdf else torch.empty(sdf_shape, dtype=x.dtype, device=x.device)
+        sdf_output = torch.empty(0 if no_sdf else sdf_shape, dtype=x.dtype, device=x.device)
         _backend.stroke_forward(alpha_output, color_output, sdf_output, x, shape_params,
                                 color_params, sdf_id, color_id, sdf_delta, use_sigmoid_clamping)
-        ctx.save_for_backward(x, alpha_output, shape_params, color_params)
-        ctx.sdf_id = sdf_id
-        ctx.color_id = color_id
-        ctx.sdf_delta = sdf_delta
-        ctx.use_sigmoid_clamping = use_sigmoid_clamping
-        ctx.pre_shape = pre_shape
+        if ctx.needs_input_grad[0] or ctx.needs_input_grad[1] or ctx.needs_input_grad[2]:
+            ctx.save_for_backward(x, alpha_output, shape_params, color_params)
+            ctx.sdf_id = sdf_id
+            ctx.color_id = color_id
+            ctx.sdf_delta = sdf_delta
+            ctx.use_sigmoid_clamping = use_sigmoid_clamping
+            ctx.pre_shape = pre_shape
 
         alpha_output = alpha_output.reshape(*pre_shape, num_strokes)
         color_output = color_output.reshape(*pre_shape, num_strokes, -1)
@@ -126,6 +127,8 @@ class _stroke_fn(Function):
         grad_color = grad_color.contiguous().reshape(-1, num_strokes, _color_dim[color_id])
         if grad_sdf is not None:
             grad_sdf = grad_sdf.contiguous().reshape(-1, num_strokes)
+        else:
+            grad_sdf = torch.zeros(0, dtype=x.dtype, device=x.device)
 
         grad_shape_params = torch.zeros_like(shape_params)
         grad_color_params = torch.zeros_like(color_params)
@@ -186,7 +189,7 @@ def get_stroke(shape_type: str, color_type: str):
             params.append((torch.rand(3) * 2 - 1) * torch.pi)
         if enable_translation:
             params.append(trans_min + (trans_max - trans_min) * torch.rand(3))
-            
+
         if len(params) > 0:
             return torch.cat(params, dim=-1)
         else:

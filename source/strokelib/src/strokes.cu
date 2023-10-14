@@ -1,23 +1,8 @@
-#include <cuda.h>
-#include <cuda_fp16.h>
-#include <cuda_runtime.h>
-#include <torch/torch.h>
-#include <ATen/cuda/CUDAContext.h>
 #include <cstdint>
 #include <utility>
 #include <array>
 #include "helper_math.h"
-
-#define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")
-#define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be a contiguous tensor")
-#define CHECK_IS_INT(x) TORCH_CHECK(x.scalar_type() == at::ScalarType::Int, #x " must be an int tensor")
-#define CHECK_IS_FLOATING(x) TORCH_CHECK(x.scalar_type() == at::ScalarType::Float || x.scalar_type() == at::ScalarType::Half || x.scalar_type() == at::ScalarType::Double, #x " must be a floating tensor")
-#define CHECK_IS_FLOAT(x) TORCH_CHECK(x.scalar_type() == at::ScalarType::Float, #x " must be a float32 tensor")
-#define CHECK_IS_SAME_TYPE(x, y) TORCH_CHECK(x.scalar_type() == y.scalar_type(), #x " and " #y " must have the same type")
-#define CHECK_FLOAT_INPUT(x) \
-    CHECK_CUDA(x);           \
-    CHECK_CONTIGUOUS(x);     \
-    CHECK_IS_FLOAT(x)
+#include "common.h"
 
 #define DECLARE_INT_TEMPLATE_ARG_LUT(fname)                        \
     template <size_t... N>                                         \
@@ -42,25 +27,6 @@ enum ColorType
     GRADIENT_RGB = 1,
     NB_COLORS,
 };
-
-template <typename T>
-__host__ __device__ inline T div_round_up(T val, T divisor)
-{
-    return (val + divisor - 1) / divisor;
-}
-
-template <typename T>
-__host__ __device__ inline T sigmoid(const T v)
-{
-    return 1.0f / (1.0f + exp(-v));
-}
-
-__device__ inline void atomicAdd3(float *address, float3 val)
-{
-    atomicAdd(address + 0, val.x);
-    atomicAdd(address + 1, val.y);
-    atomicAdd(address + 2, val.z);
-}
 
 template <bool Inverse = true>
 __device__ inline float3 rotate_point(float3 point, float3 angle)
@@ -445,6 +411,7 @@ void stroke_forward_warpper(float *alpha_output,
     constexpr int64_t n_threads = 1024;
     const int64_t n_blocks = div_round_up(n_points * n_strokes, n_threads);
 
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
     stroke_forward_kernel<
         base_sdf_type,
         color_type,
@@ -452,7 +419,7 @@ void stroke_forward_warpper(float *alpha_output,
         enable_rotation,
         enable_singlescale,
         enable_multiscale>
-        <<<n_blocks, n_threads>>>(
+        <<<n_blocks, n_threads, 0, stream>>>(
             alpha_output,
             color_output,
             sdf_output,
@@ -499,7 +466,7 @@ void stroke_forward(at::Tensor alpha_output,
     fn_table[fn_id](
         alpha_output.data_ptr<float>(),
         color_output.data_ptr<float>(),
-        sdf_output.defined() ? sdf_output.data_ptr<float>() : nullptr,
+        sdf_output.numel() ? sdf_output.data_ptr<float>() : nullptr,
         x.data_ptr<float>(),
         shape_params.data_ptr<float>(),
         color_params.data_ptr<float>(),
@@ -657,6 +624,7 @@ void stroke_backward_warpper(float *grad_shape_params,
     constexpr int64_t n_threads = 1024;
     const int64_t n_blocks = div_round_up(n_points * n_strokes, n_threads);
 
+    at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
     stroke_backward_kernel<
         base_sdf_type,
         color_type,
@@ -664,7 +632,7 @@ void stroke_backward_warpper(float *grad_shape_params,
         enable_rotation,
         enable_singlescale,
         enable_multiscale>
-        <<<n_blocks, n_threads>>>(
+        <<<n_blocks, n_threads, 0, stream>>>(
             grad_shape_params,
             grad_color_params,
             grad_x,
@@ -725,7 +693,7 @@ void stroke_backward(at::Tensor grad_shape_params,
         grad_x.data_ptr<float>(),
         grad_alpha.data_ptr<float>(),
         grad_color.data_ptr<float>(),
-        grad_sdf.defined() ? grad_sdf.data_ptr<float>() : nullptr,
+        grad_sdf.numel() ? grad_sdf.data_ptr<float>() : nullptr,
         x.data_ptr<float>(),
         alpha.data_ptr<float>(),
         shape_params.data_ptr<float>(),

@@ -1,4 +1,4 @@
-Config.exp_name = 'test_stroke_03_cuda'
+Config.exp_name = 'test_stroke_10_cuda'
 Config.dataset_loader = 'blender'
 Config.near = 2
 Config.far = 6

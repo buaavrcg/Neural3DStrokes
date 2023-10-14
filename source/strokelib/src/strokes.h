@@ -43,17 +43,3 @@ void stroke_backward(at::Tensor grad_shape_params,
                      const uint32_t color_id,
                      const float sdf_delta,
                      const bool use_sigmoid_clamping);
-
-// Calculate the cumulative product along the last stroke dimension.
-// output: [N_Points, N_Strokes], float
-// input: [N_Points, N_Strokes], float
-void cumprod_reverse_forward(at::Tensor output,
-                             const at::Tensor input);
-// grad_input: [N_Points, N_Strokes], float
-// grad_output: [N_Points, N_Strokes], float
-// input: [N_Points, N_Strokes], float
-// output: [N_Points, N_Strokes], float
-void cumprod_reverse_backward(at::Tensor grad_input,
-                              const at::Tensor grad_output,
-                              const at::Tensor input,
-                              const at::Tensor output);
