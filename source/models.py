@@ -44,7 +44,7 @@ class Model(nn.Module):
 
         # Construct MLPs. WARNING: Construction order may matter, if MLP weights are
         # being regularized.
-        self.nerf = NerfMLP()
+        self.nerf = StrokeField()
         if self.single_mlp:
             self.prop = self.nerf
         elif self.single_prop:
