@@ -1,17 +1,18 @@
-Config.exp_name = 'test_capped_torus'
+Config.exp_name = 'test_stroke_10_cuda'
 Config.dataset_loader = 'blender'
 Config.near = 2
 Config.far = 6
 Config.factor = 2
-Config.train_render_every = 200
+Config.train_render_every = 250
 Config.max_steps = 50000
 Config.mask_loss_mult = 0.01
 Config.sinkhorn_loss_mult = 0.0
 Config.patch_size = 1
-Config.lr_init = 0.005
-Config.lr_final = 0.001
-Config.lr_delay_steps = 500
+# Config.lr_init = 0.005
+# Config.lr_final = 0.001
+# Config.lr_delay_steps = 500
 
+Model.use_stroke_field = True
 Model.raydist_fn = None
 Model.num_levels = 2
 Model.num_prop_samples = 64
@@ -19,7 +20,7 @@ Model.num_nerf_samples = 32
 
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
-StrokeField.shape_type = 'cappedtorus'
+StrokeField.shape_type = 'sphere'
 StrokeField.use_sigmoid_clamping = False
 
 MLP.bbox_size = 3.0

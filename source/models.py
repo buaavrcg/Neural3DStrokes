@@ -12,11 +12,13 @@ from source.utils import render
 from source.utils import training as train_utils
 from source.gridencoder import GridEncoder
 from source import strokes
+from source.strokelib import get_stroke
 
 
 @gin.configurable
 class Model(nn.Module):
     """A mip-Nerf360 model containing all MLPs."""
+    use_stroke_field: bool = True  # If True, use the stroke field, otherwise use nerf.
     num_prop_samples: int = 64  # The number of samples for each proposal level.
     num_nerf_samples: int = 32  # The number of samples the final nerf level.
     num_levels: int = 3  # The number of sampling levels (3==2 proposals, 1 nerf).
@@ -44,7 +46,7 @@ class Model(nn.Module):
 
         # Construct MLPs. WARNING: Construction order may matter, if MLP weights are
         # being regularized.
-        self.nerf = StrokeField()
+        self.nerf = StrokeField() if self.use_stroke_field else NerfMLP()
         if self.single_mlp:
             self.prop = self.nerf
         elif self.single_prop:
@@ -311,7 +313,7 @@ class MLP(nn.Module):
             raw_density += self.density_noise * torch.randn_like(raw_density)
         return raw_density, x, coords
 
-    def forward(self, coords, viewdirs=None, deltas=None, no_warp=False):
+    def forward(self, coords, viewdirs=None, no_warp=False):
         """Evaluate the MLP.
 
         Args:
@@ -432,7 +434,7 @@ class PropMLP(MLP):
 class StrokeField(nn.Module):
     """A vector stroke field."""
     shape_type: str = 'sphere'  # The type of shape function to use.
-    color_type: str = 'constant'  # The type of color function to use.
+    color_type: str = 'constant_rgb'  # The type of color function to use.
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
     max_density: float = 5e1  # The maximum density of the strokes.
@@ -452,9 +454,12 @@ class StrokeField(nn.Module):
             self.shape_param_sampler = strokes.stroke_sdf(self.shape_type)
         self.color, self.d_color, self.color_param_ranges, \
             self.color_param_sampler = strokes.stroke_color(self.color_type)
+        self.stroke_fn, self.d_shape, self.d_color, self.shape_param_ranges, \
+            self.color_param_ranges, self.shape_param_sampler, self.color_param_sampler = \
+            get_stroke(self.shape_type, self.color_type)
         self.shape_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_shape))
         self.color_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_color))
-        self.alpha_params = nn.Parameter(torch.ones(self.max_num_strokes, 1))
+        self.alpha_params = nn.Parameter(torch.ones(self.max_num_strokes))
         self.step = 0
         self.fixed_step = 0
 
@@ -480,8 +485,8 @@ class StrokeField(nn.Module):
             for i in range(self.step, step):
                 shape_params = self.shape_param_sampler(train_frac)
                 color_params = self.color_param_sampler()
-                self.shape_params.data[i] = shape_params.to(self.shape_params.device)
-                self.color_params.data[i] = color_params.to(self.color_params.device)
+                self.shape_params.data[-1-i] = shape_params.to(self.shape_params.device)
+                self.color_params.data[-1-i] = color_params.to(self.color_params.device)
             print(f'Update stroke field {self.step} -> {step}')
         self.step = step
         self.fixed_step = max(self.fixed_step, step - self.max_opt_strokes)
@@ -500,40 +505,29 @@ class StrokeField(nn.Module):
         else:
             raise NotImplementedError(f'Unknown warp function {self.warp_fn}')
 
+        # Truncate the parameters to the current step.
+        shape_params = self.shape_params[-self.step:]
+        color_params = self.color_params[-self.step:]
+        density_params = torch.clamp(self.alpha_params[-self.step:], min=0) * self.max_density
+        if self.fixed_step > 0:
+            shape_params = torch.cat(
+                (shape_params[:-self.fixed_step], shape_params[-self.fixed_step:].detach()))
+            color_params = torch.cat(
+                (color_params[:-self.fixed_step], color_params[-self.fixed_step:].detach()))
+            density_params = torch.cat(
+                (density_params[:-self.fixed_step], density_params[-self.fixed_step:].detach()))
+
+        # Compute alpha and color for each stroke.
+        sdf_delta = self.sdf_delta if self.training else self.sdf_delta_eval
+        alphas, colors = self.stroke_fn(coords, shape_params, color_params, sdf_delta,
+                                        self.use_sigmoid_clamping)
+
         # Composite strokes to get the final density and color.
-        h_density = torch.zeros_like(coords[..., 0])
-        h_color = torch.zeros_like(coords[..., 0:3])
-        h_color_weight = torch.ones_like(coords[..., 0])
-        density_params = torch.clamp(self.alpha_params, min=0) * self.max_density
-        for i in range(self.step):
-            shape_params = self.shape_params[i]
-            color_params = self.color_params[i]
-            density = density_params[i]
-
-            # Deatch parameters if they are not optimized
-            if i < self.fixed_step:
-                shape_params = shape_params.detach()
-                color_params = color_params.detach()
-                density = density.detach()
-
-            sdf, base_coords = self.sdf(coords, shape_params)
-            color = self.color(base_coords, color_params, sdf, shape_params)
-
-            if self.training or self.sdf_delta_eval > 0.0:
-                sdf_delta = self.sdf_delta if self.training else self.sdf_delta_eval
-                if self.use_sigmoid_clamping:
-                    t = torch.sigmoid(-sdf * (4.0 / sdf_delta))
-                else:
-                    t = (torch.clamp(-sdf, -sdf_delta, sdf_delta) / sdf_delta + 1) * 0.5
-            else:
-                t = (sdf <= 0).to(sdf.dtype)
-            # density = F.softplus(-sdf / self.dilation_scale) * torch.clamp(alpha_params, 0, 1)
-
-            # h_density = h_density + density
-            # h_density = torch.maximum(h_density, density)
-            h_density = (1 - t) * h_density + t * density
-            h_color = (1 - t[..., None]) * h_color + t[..., None] * color
-            h_color_weight = (1 - t) * h_color_weight
+        T = torch.cumprod(1 - alphas, dim=-1)
+        weights = alphas * torch.cat([torch.ones_like(coords[..., :1]), T[..., :-1]], dim=-1)
+        h_color_weight = T[..., -1]
+        h_density = torch.einsum('...i, i -> ...', weights, density_params)
+        h_color = torch.einsum('...i, ...id -> ...d', weights, colors)
 
         # re-normalize the color
         h_color = torch.clamp(h_color / (1 + 1e-6 - h_color_weight[..., None]), 0, 1)

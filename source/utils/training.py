@@ -73,7 +73,8 @@ def clip_gradients(model, accelerator, config : configs.Config):
         accelerator.clip_grad_value_(model.parameters(), config.grad_max_val)
 
     for param in model.parameters():
-        param.grad.nan_to_num_()
+        if param.grad is not None:
+            param.grad.nan_to_num_()
 
 
 def log_lerp(t, v0, v1):
