@@ -168,13 +168,14 @@ def get_stroke(shape_type: str, color_type: str):
     if enable_translation:
         shape_param_ranges += [(None, None)] * 3
 
-    def shape_sampler(train_frac):
+    def shape_sampler(train_frac, error_coord=None):
         trans_min = torch.tensor([-0.4, -0.4, -0.4])
         trans_max = torch.tensor([0.4, 0.4, 0.4])
         trans_range = torch.abs(trans_max - trans_min)
         scale_range = torch.square(trans_range).sum().sqrt()
-        scale_min = 0.05 + 0.10 * (1 - train_frac)
-        scale_max = 0.05 + 0.20 * (1 - train_frac)
+        scale_t = (1 - train_frac) ** 1.5
+        scale_min = 0.02 + 0.13 * scale_t
+        scale_max = 0.04 + 0.21 * scale_t
         scale_min = scale_min * scale_range
         scale_max = scale_max * scale_range
 
@@ -188,7 +189,10 @@ def get_stroke(shape_type: str, color_type: str):
         if enable_rotation:
             params.append((torch.rand(3) * 2 - 1) * torch.pi)
         if enable_translation:
-            params.append(trans_min + (trans_max - trans_min) * torch.rand(3))
+            if error_coord is not None:
+                params.append(error_coord)
+            else:
+                params.append(trans_min + (trans_max - trans_min) * torch.rand(3))
 
         if len(params) > 0:
             return torch.cat(params, dim=-1)

@@ -225,3 +225,17 @@ def hash_decay_loss(ray_history, config):
         hash_levelwise_mean = ray_results['hash_levelwise_mean'].mean()
         total_loss += config.hash_decay_mult * hash_levelwise_mean
     return total_loss
+
+
+def error_loss(batch, renderings, config: configs.Config):
+    rendering = renderings[-1]
+    residual = rendering['rgb'].detach() - batch['rgb'][..., :3]
+    residual_sq = torch.square(residual)
+    residual_target = 2.0 * residual_sq.sum(-1, keepdim=True)
+    
+    error_residual = rendering['error'] - torch.clamp(residual_target, 0.0, 1.0)
+    error_residual_abs = torch.abs(error_residual)
+    
+    loss = config.error_loss_mult * error_residual_abs.mean()
+    return loss
+

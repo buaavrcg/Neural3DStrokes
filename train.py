@@ -124,7 +124,6 @@ def train():
             for param_group in optimizer.param_groups:
                 param_group['lr'] = learning_rate
 
-            optimizer.zero_grad()
             with accelerator.autocast():
                 renderings, ray_history = model(batch, compute_extras=False)
 
@@ -136,6 +135,7 @@ def train():
             # clip gradient by max/norm/nan
             train_utils.clip_gradients(model, accelerator, cfg)
             optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
             model.step_update(cur_step=step, max_step=num_steps)
 
             # Log training summaries. This is put behind a host_id check because in
@@ -191,6 +191,10 @@ def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tenso
     # hash grid l2 weight decay
     if cfg.hash_decay_mult > 0:
         losses['hash_decay'] = loss_fn.hash_decay_loss(ray_history, cfg)
+        
+    # error field loss
+    if cfg.error_loss_mult > 0:
+        losses['error'] = loss_fn.error_loss(batch, renderings, cfg)
 
     loss = sum(losses.values())
     stats['loss'] = loss.item()
