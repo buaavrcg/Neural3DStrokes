@@ -11,6 +11,7 @@ def _broadcast_params(p: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
 
 def unit_sphere(x: torch.Tensor, p: torch.Tensor):
     """SDF for a unit sphere."""
+    import pdb; pdb.set_trace()
     x = torch.square(x)
     d = torch.sqrt(x[..., 0] + x[..., 1] + x[..., 2] + 1e-8)
     return d - 1.
@@ -19,6 +20,35 @@ def unit_sphere(x: torch.Tensor, p: torch.Tensor):
 def unit_cube(x: torch.Tensor, p: torch.Tensor):
     """SDF for a unit cube."""
     return torch.max(torch.abs(x), dim=-1).values - 1.
+
+def unit_round_cube(x: torch.Tensor, p: torch.Tensor):
+    """SDF for a unit round cube."""
+    ones=torch.full_like(x,1.0)
+    x=torch.abs(x)-ones
+    x1=torch.square(torch.relu(x))
+    d1=torch.sqrt(x1[..., 0] + x1[..., 1] + x1[..., 2] + 1e-8)
+    d2=torch.max(x, dim=-1).values
+    d2=-torch.relu(-d2)
+    # import pdb; pdb.set_trace()
+    return d1+d2-p[..., 0]
+
+def unit_capped_torus(x: torch.Tensor, p: torch.Tensor):
+    """SDF for a unit capped torus."""
+    x=torch.stack([
+        torch.abs(x[...,0]),torch.abs(x[...,1]),torch.abs(x[...,2])
+    ],dim=-1)
+    k=torch.sin(p[...,0])*x[...,0]+torch.cos(p[...,0])*x[...,1] if True else torch.sqrt(x[...,0]*x[...,0]+x[...,1]*x[...,1]+1e-8)
+    return torch.sqrt(x[...,0]*x[...,0]+x[...,1]*x[...,1]+x[...,2]*x[...,2]+1.0-2.0*k+1e-8)-p[...,1]
+
+def unit_capsule(x: torch.Tensor, p: torch.Tensor):
+    """SDF for a unit capsule."""
+    x = torch.stack([
+        x[...,0],
+        x[...,1]-torch.clamp(torch.clamp(x[...,1],min=0.0),max=p[...,0]),
+        x[...,2],
+    ], dim=-1)
+    return torch.sqrt(x[...,0]*x[...,0]+x[...,1]*x[...,1]+x[...,2]*x[...,2]+1e-8)-1.0
+
 
 
 def rotate(x: torch.Tensor, r: torch.Tensor):
@@ -48,6 +78,9 @@ def stroke_sdf(shape_type: str):
         'cube': (unit_cube, [], None, True, True, True, False),
         'aabb': (unit_cube, [], None, True, False, False, True),
         'obb': (unit_cube, [], None, True, True, False, True),
+        'roundcube': (unit_round_cube, [(0, 1)], lambda: torch.rand(1), True, True, True, False),
+        'cappedtorus': (unit_capped_torus, [(0, 2 * torch.acos(torch.tensor(0.0))), (0, None)], lambda: torch.rand(2), True, True, True, False),
+        'capsule': (unit_capsule, [(0.5, None)], lambda: torch.rand(1)+1, True, True, True, False),
     }
     base_sdf, param_ranges, sampler, enable_translation, enable_rotation, \
         enable_singlescale, enable_multiscale = sdfs[shape_type]
