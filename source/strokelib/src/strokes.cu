@@ -641,7 +641,8 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
 
     grad_shape_params += idx_stroke * n_shape_params;
     grad_color_params += idx_stroke * n_color_params;
-    grad_x += idx_point * 3;
+    if (grad_x)
+        grad_x += idx_point * 3;
     grad_alpha += idx_thread;
     grad_color += idx_thread * ColorField<color_type>::color_dim;
     if (grad_sdf)
@@ -720,7 +721,8 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
         grad_sp_reverse += 3;
     }
 
-    atomicAdd3(grad_x, dL_dPos);
+    if (grad_x)
+        atomicAdd3(grad_x, dL_dPos);
 }
 
 template <uint32_t id>
@@ -818,7 +820,7 @@ void stroke_backward(at::Tensor grad_shape_params,
     fn_table[fn_id](
         grad_shape_params.data_ptr<float>(),
         grad_color_params.data_ptr<float>(),
-        grad_x.data_ptr<float>(),
+        grad_x.numel() ? grad_x.data_ptr<float>() : nullptr,
         grad_alpha.data_ptr<float>(),
         grad_color.data_ptr<float>(),
         grad_sdf.numel() ? grad_sdf.data_ptr<float>() : nullptr,

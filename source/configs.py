@@ -44,7 +44,7 @@ class Config:
 
     # Common configs
     exp_name : str = 'test'  # Experiment name
-    render_chunk_size: int = 65536  # Chunk size for whole-image renderings.
+    render_chunk_size: int = 16384  # Chunk size for whole-image renderings.
     vis_num_rays: int = 16  # The number of rays to visualize.
     vis_decimate: int = 0  # Decimate images for tensorboard (ie, x[::d, ::d]) to conserve memory usage.
 
@@ -81,6 +81,7 @@ class Config:
     grad_max_val: float = 0.  # Gradient clipping value, disabled if == 0.
     distortion_loss_mult: float = 0.005  # Multiplier on the distortion loss.
     opacity_loss_mult: float = 0.  # Multiplier on the distortion loss.
+    error_loss_mult: float = 0.1  # Multiplier on the error loss.
 
     # Eval configs
     num_showcase_images: int = 5  # The number of test-set images to showcase.

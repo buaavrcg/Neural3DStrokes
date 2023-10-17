@@ -234,6 +234,9 @@ def visualize_suite(rendering, batch):
 
     if 'rgb_cc' in rendering:
         vis['color_corrected'] = rendering['rgb_cc']
+        
+    if 'error' in rendering:
+        vis['error'] = rendering['error'].squeeze(-1)
 
     # Render every item named "normals*".
     for key, val in rendering.items():

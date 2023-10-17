@@ -1,13 +1,13 @@
-Config.exp_name = 'test_cuda_roundcube_new'
+Config.exp_name = 'test_stroke_15_errorpoint'
 Config.dataset_loader = 'blender'
+Config.data_dir = 'data/nerf_synthetic/lego'
 Config.near = 2
 Config.far = 6
 Config.factor = 2
-Config.train_render_every = 250
+Config.train_render_every = 500
 Config.max_steps = 50000
 Config.mask_loss_mult = 0.01
 Config.sinkhorn_loss_mult = 0.0
-Config.patch_size = 1
 # Config.lr_init = 0.005
 # Config.lr_final = 0.001
 # Config.lr_delay_steps = 500
@@ -25,5 +25,3 @@ StrokeField.use_sigmoid_clamping = False
 
 MLP.bbox_size = 3.0
 MLP.warp_fn = None
-PropMLP.disable_rgb = True
-PropMLP.grid_level_dim = 1
