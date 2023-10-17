@@ -132,12 +132,14 @@ class _stroke_fn(Function):
 
         grad_shape_params = torch.zeros_like(shape_params)
         grad_color_params = torch.zeros_like(color_params)
-        grad_x = torch.zeros_like(x)
+        grad_x = torch.zeros(x.shape if ctx.needs_input_grad[0] else 0, dtype=x.dtype, device=x.device)
         _backend.stroke_backward(grad_shape_params, grad_color_params, grad_x, grad_alpha,
                                  grad_color, grad_sdf, x, alpha_output, shape_params, color_params,
                                  sdf_id, color_id, sdf_delta, use_sigmoid_clamping)
-
-        grad_x = grad_x.reshape(*pre_shape, 3)
+        if ctx.needs_input_grad[0]:
+            grad_x = grad_x.reshape(*pre_shape, 3)
+        else:
+            grad_x = None
         return grad_x, grad_shape_params, grad_color_params, None, None, None, None, None
 
 

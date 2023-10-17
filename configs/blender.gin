@@ -1,5 +1,6 @@
 Config.exp_name = 'test_stroke_15_errorpoint'
 Config.dataset_loader = 'blender'
+Config.data_dir = 'data/nerf_synthetic/lego'
 Config.near = 2
 Config.far = 6
 Config.factor = 2

@@ -490,13 +490,13 @@ class StrokeField(nn.Module):
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
     max_density: float = 50.  # The maximum density of the strokes.
     sdf_delta: float = 0.1  # How much to dilate the sdf boundary.
-    sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
+    sdf_delta_eval: float = 0.05  # If zero, use hard sdf bounds for eval.
     use_sigmoid_clamping: bool = False  # If True, use sigmoid for soft clamping.
     disable_density_normals: bool = True  # If True don't compute normals.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
     min_update_interval: int = 2  # The minimum number of steps to add new strokes.
-    error_point_samples: int = 20000  # The number of samples to sample the error field.
+    error_point_samples: int = 50000  # The number of samples to sample the error field.
     error_bbox_size: float = 4.  # The side length of the error grid.
     fast_start_strokes: int = 30  # only use error field sample after these number of strokes.
 
@@ -543,7 +543,7 @@ class StrokeField(nn.Module):
 
             # Sample a batch of random points and get their errors
             coords_top = None
-            if step >= self.fast_start_strokes:
+            if self.step >= self.fast_start_strokes:
                 sample_coords = torch.rand((self.error_point_samples, 3),
                                            device=self.shape_params.device)
                 sample_coords = sample_coords * 2 - 1  # [0, 1] to range [-1, 1]
