@@ -1,4 +1,4 @@
-Config.exp_name = 'test_stroke_10_cuda'
+Config.exp_name = 'test_cuda_roundcube_new'
 Config.dataset_loader = 'blender'
 Config.near = 2
 Config.far = 6
@@ -20,7 +20,7 @@ Model.num_nerf_samples = 32
 
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
-StrokeField.shape_type = 'sphere'
+StrokeField.shape_type = 'roundcube'
 StrokeField.use_sigmoid_clamping = False
 
 MLP.bbox_size = 3.0

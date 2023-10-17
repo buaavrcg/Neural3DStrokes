@@ -11,6 +11,9 @@ except ImportError:
 _base_sdf_id = {
     'unit_sphere': 0,
     'unit_cube': 1,
+    'unit_round_cube': 2,
+    'unit_capped_torus': 3,
+    'unit_capsule': 4,
 }
 
 _sdf_dict = {
@@ -20,6 +23,9 @@ _sdf_dict = {
     'cube': ('unit_cube', [], None, True, True, True, False),
     'aabb': ('unit_cube', [], None, True, False, False, True),
     'obb': ('unit_cube', [], None, True, True, False, True),
+    'roundcube': ('unit_round_cube', [(0, 1)], lambda _: torch.rand(1), True, True, True, False),
+    'cappedtorus': ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))), (0, None)], lambda _: torch.rand(2), True, True, True, False),
+    'capsule': ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1)+1, True, True, True, False),
 }
 
 _color_dict = {

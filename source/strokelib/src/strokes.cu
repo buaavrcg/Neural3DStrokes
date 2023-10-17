@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <utility>
 #include <array>
+#include <math.h>
 #include "helper_math.h"
 #include "common.h"
 
@@ -18,6 +19,9 @@ enum BaseSDFType
 {
     UNIT_SPHERE = 0,
     UNIT_CUBE = 1,
+    UNIT_ROUND_CUBE = 2,
+    UNIT_CAPPED_TORUS = 3,   
+    UNIT_CAPSULE = 4,   
     NB_BASE_SDFS,
 };
 
@@ -244,6 +248,130 @@ struct BaseSDF<UNIT_CUBE>
         float grad_z = p_abs.x < p_abs.z && p_abs.y < p_abs.z ? (pos.z < 0.0f ? -1.0f : 1.0f) : 0.0f;
         return make_float3(grad_x, grad_y, grad_z);
     }
+};
+
+template <>
+struct BaseSDF<UNIT_ROUND_CUBE>
+{
+    __device__ static float sdf(float3 pos, const float *params)
+    {
+        float3 p_abs = fabs(pos);
+        float3 p_dis= p_abs - make_float3(1.0f, 1.0f, 1.0f);
+        float3 p_dis_positive=fmaxf(p_dis, make_float3(0.0f, 0.0f, 0.0f));
+        float3 p_dis_square=p_dis_positive*p_dis_positive;
+        float p_dis_norm = sqrt(p_dis_square.x+p_dis_square.y+p_dis_square.z+1e-8f);
+        float p_dis_min = min(max(p_dis.x, max(p_dis.y, p_dis.z)), 0.0f);
+        return p_dis_norm + p_dis_min-params[0];
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
+    {
+        atomicAdd(grad_params + 0, -grad_SDF*1.0f);
+
+        float3 p_abs = fabs(pos);
+        float3 p_dis = p_abs - make_float3(1.0f, 1.0f, 1.0f); 
+        float3 p_dis_positive=fmaxf(p_dis, make_float3(0.0f, 0.0f, 0.0f));
+        float3 p_dis_square=p_dis_positive*p_dis_positive;
+        float p_dis_norm = sqrt(p_dis_square.x+p_dis_square.y+p_dis_square.z+1e-8f);
+        float p_dis_norm_reciprocal = rsqrt(p_dis_square.x+p_dis_square.y+p_dis_square.z+1e-8) ;
+        float3 grad_p_dis_positive = p_dis_norm > 0.0f ? p_dis_positive *p_dis_norm_reciprocal : make_float3(0.0f, 0.0f, 0.0f);
+        float grad_p_x_sym = (pos.x < 0.0f ? -1.0f : 1.0f);
+        float grad_p_y_sym = (pos.y < 0.0f ? -1.0f : 1.0f);
+        float grad_p_z_sym = (pos.z < 0.0f ? -1.0f : 1.0f);
+        float3 grad_p_dis_sym = make_float3(grad_p_x_sym, grad_p_y_sym, grad_p_z_sym);
+        float3 grad_p_dis = grad_p_dis_positive*grad_p_dis_sym;
+
+        float p_dis_min = min(max(p_dis.x, max(p_dis.y, p_dis.z)), 0.0f);
+        float grad_p_dis_min = p_dis_min < 0.0f ? 1.0f : 0.0f;
+        float grad_p_dis_min_x = grad_p_dis_min * (p_dis.x>=p_dis.y&&p_dis.x>=p_dis.z ? 1.0f : 0.0f)*grad_p_dis_sym.x;
+        float grad_p_dis_min_y = grad_p_dis_min * (p_dis.x<p_dis.y&&p_dis.y>=p_dis.z ? 1.0f : 0.0f)*grad_p_dis_sym.y;
+        float grad_p_dis_min_z = grad_p_dis_min * (p_dis.x<p_dis.z&&p_dis.y<p_dis.z ? 1.0f : 0.0f)*grad_p_dis_sym.z;
+
+        float grad_x = grad_p_dis.x + grad_p_dis_min_x;
+        float grad_y = grad_p_dis.y + grad_p_dis_min_y;
+        float grad_z = grad_p_dis.z + grad_p_dis_min_z;
+
+        return make_float3(grad_x, grad_y, grad_z);
+    }
+};
+
+template <>
+struct BaseSDF<UNIT_CAPPED_TORUS>
+{
+    __device__ static float sdf(float3 pos, const float *params)
+    {
+        float3 p_abs = make_float3(fabs(pos.x), pos.y, pos.z);
+        float2 p_xy= make_float2(p_abs.x, p_abs.y);
+        float2 sc= make_float2(sinf(params[0]), cosf(params[0]));
+        float k = cross(make_float3(p_xy, 0.0f), make_float3(sc, 0.0f)).z>0?dot(p_xy, sc):sqrt(p_xy.x*p_xy.x+p_xy.y*p_xy.y+1e-8f);
+        return sqrtf(dot(p_abs, p_abs) + 1.f - 2.f * k+1e-8f) - params[1];
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
+    {
+        float3 p_abs = make_float3(fabs(pos.x), pos.y, pos.z);
+        float2 p_xy = make_float2(p_abs.x, p_abs.y);
+        float2 sc = make_float2(sinf(params[0]), cosf(params[0]));
+        float2 sc_f= make_float2(cosf(params[0]), sinf(params[0]));
+        float k = cross(make_float3(p_xy, 0.0f), make_float3(sc, 0.0f)).z > 0 ? dot(p_xy, sc) : length(p_xy);
+        float inv_norm = rsqrt(dot(p_abs, p_abs) + 1.f - 2.f * k+1e-8f);
+
+        float3 grad_p_dot = pos;
+        float grad_x=0.0f;
+        float grad_y=0.0f;
+        float grad_z=0.0f;
+
+        if(k>0.f){
+            float grad_p_k_x = -(pos.x < 0.0f ? -1.0f : 1.0f)*sc.x;
+            float grad_p_k_y = -sc.y;
+            float grad_p_k_z = 0.0f;
+            float3 grad_p_k = make_float3(grad_p_k_x, grad_p_k_y, grad_p_k_z);
+            atomicAdd(grad_params + 0, -grad_SDF*dot(p_xy, sc_f));
+            grad_x=(grad_p_dot.x+grad_p_k.x)*inv_norm;
+            grad_y=(grad_p_dot.y+grad_p_k.y)*inv_norm;
+            grad_z=(grad_p_dot.z+grad_p_k.z)*inv_norm;
+
+        }
+        else {
+            float grad_p_k_x = pos.x;
+            float grad_p_k_y = pos.y;
+            float grad_p_k_z = 0.0f;
+            float3 grad_p_k = make_float3(grad_p_k_x, grad_p_k_y, grad_p_k_z);
+            grad_x=(grad_p_dot.x+grad_p_k.x)*inv_norm;
+            grad_y=(grad_p_dot.y+grad_p_k.y)*inv_norm;
+            grad_z=(grad_p_dot.z+grad_p_k.z)*inv_norm;
+        }
+
+        atomicAdd(grad_params + 1, -grad_SDF);
+        return make_float3(grad_x, grad_y, grad_z);
+
+
+    }
+};
+
+template <>
+struct BaseSDF<UNIT_CAPSULE>
+{
+    __device__ static float sdf(float3 pos, const float *params)
+    {
+        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
+        float3 p_xyz= make_float3(pos.x, p_y, pos.z);
+        float3 p_sq = p_xyz * p_xyz;
+        return sqrt(p_sq.x+p_sq.y+p_sq.z+1e-8)-1.f;
+    }
+    
+    __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
+    {
+        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
+        float3 p_xyz= make_float3(pos.x, p_y, pos.z);
+        float3 p_sq = p_xyz * p_xyz;
+        float3 grad_p_xyz= p_xyz*rsqrt(p_sq.x+p_sq.y+p_sq.z+1e-8);
+        if(pos.y>params[0]){
+            atomicAdd(grad_params+0, -grad_SDF*p_y*rsqrt(p_sq.x+p_sq.y+p_sq.z+1e-8));
+        }
+        return make_float3(grad_p_xyz.x, grad_p_xyz.y, grad_p_xyz.z);
+    }
+
 };
 
 /////////////////////////////////////////////////////////////////////
