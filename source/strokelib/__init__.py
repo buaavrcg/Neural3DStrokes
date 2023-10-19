@@ -1,1 +1,1 @@
-from .strokes import get_stroke
+from .strokes import get_stroke, compose_strokes

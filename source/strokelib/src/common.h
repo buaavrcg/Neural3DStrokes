@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cuda.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
@@ -19,6 +21,16 @@
     CHECK_CUDA(x);           \
     CHECK_CONTIGUOUS(x);     \
     CHECK_IS_FLOAT(x)
+
+#define DECLARE_INT_TEMPLATE_ARG_LUT(fname)                        \
+    template <size_t... N>                                         \
+    static constexpr auto fname##_lut(std::index_sequence<N...> s) \
+    {                                                              \
+        return std::array{(&fname<N>)...};                         \
+    }
+
+#define MAKE_INT_TEMPLATE_ARG_LUT(fname, N) \
+    fname##_lut(std::make_index_sequence<N>{})
 
 template <typename T>
 __host__ __device__ inline T div_round_up(T val, T divisor)

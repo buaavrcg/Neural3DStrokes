@@ -5,16 +5,6 @@
 #include "helper_math.h"
 #include "common.h"
 
-#define DECLARE_INT_TEMPLATE_ARG_LUT(fname)                        \
-    template <size_t... N>                                         \
-    static constexpr auto fname##_lut(std::index_sequence<N...> s) \
-    {                                                              \
-        return std::array{(&fname<N>)...};                         \
-    }
-
-#define MAKE_INT_TEMPLATE_ARG_LUT(fname, N) \
-    fname##_lut(std::make_index_sequence<N>{})
-
 enum BaseSDFType
 {
     UNIT_SPHERE = 0,

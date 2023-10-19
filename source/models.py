@@ -12,7 +12,7 @@ from source.utils import render
 from source.utils import training as train_utils
 from source.gridencoder import GridEncoder
 from source import strokes
-from source.strokelib import get_stroke
+from source.strokelib import get_stroke, compose_strokes
 
 
 def _warp_coords(warp_fn, coords, bbox_size=2.0, no_warp=False):
@@ -499,6 +499,7 @@ class StrokeField(nn.Module):
     error_point_samples: int = 50000  # The number of samples to sample the error field.
     error_bbox_size: float = 4.  # The side length of the error grid.
     fast_start_strokes: int = 30  # only use error field sample after these number of strokes.
+    fast_compose_strokes: int = 0  # only use pytorch compose before these number of strokes.
 
     # error_cell_samples: int = 1000  # The number of samples to compute each error cell.
 
@@ -582,9 +583,9 @@ class StrokeField(nn.Module):
         # Compute the fixed step strokes.
         if self.fixed_step > 0:
             with torch.no_grad():
-                shape_params_fixed = self.shape_params[:self.fixed_step]
-                color_params_fixed = self.color_params[:self.fixed_step]
-                density_params_fixed = self.alpha_params[:self.fixed_step] * self.max_density
+                shape_params_fixed = self.shape_params[:self.fixed_step].detach()
+                color_params_fixed = self.color_params[:self.fixed_step].detach()
+                density_params_fixed = self.alpha_params[:self.fixed_step].detach() * self.max_density
                 alphas_fixed, colors_fixed = self.stroke_fn(coords, shape_params_fixed,
                                                             color_params_fixed, sdf_delta,
                                                             self.use_sigmoid_clamping)
@@ -593,16 +594,18 @@ class StrokeField(nn.Module):
             density_params = torch.cat([density_params_fixed, density_params], dim=-1)
 
         # Composite strokes to get the final density and color.
-        T = torch.flip(torch.cumprod(torch.flip(1 - alphas, [-1]), -1), [-1])  # reverse cumprod
-        weights = alphas * torch.cat([T[..., 1:], torch.ones_like(coords[..., :1])], dim=-1)
-        h_color_weight = T[..., 0]
-        density = torch.einsum('...i, i -> ...', weights, density_params)
-        colors = torch.einsum('...i, ...id -> ...d', weights, colors)
+        use_memory_efficient_compose = self.step > self.fast_compose_strokes
+        if use_memory_efficient_compose:
+            density, color = compose_strokes(alphas, colors, density_params)
+        else:
+            T = torch.flip(torch.cumprod(torch.flip(1 - alphas, [-1]), -1), [-1])  # reverse cumprod
+            weights = alphas * torch.cat([T[..., 1:], torch.ones_like(coords[..., :1])], dim=-1)
+            h_color_weight = T[..., 0]
+            density = torch.einsum('...i, i -> ...', weights, density_params)
+            color = torch.einsum('...i, ...id -> ...d', weights, colors)
+            color = torch.clamp(color / (1 + 1e-6 - h_color_weight[..., None]), 0, 1)
 
-        # re-normalize the color
-        colors = torch.clamp(colors / (1 + 1e-6 - h_color_weight[..., None]), 0, 1)
-
-        return density, colors, coords
+        return density, color, coords
 
     def forward(self, coords, viewdirs=None, no_warp=False):
         """Evaluate the stroke field.
