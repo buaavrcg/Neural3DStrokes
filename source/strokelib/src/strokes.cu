@@ -496,7 +496,7 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
     const float sdf_scale = (use_sigmoid_clamping ? 4.0f : 0.5f) / sdf_delta;
     float alpha = sdf_delta > 0.0f ? (use_sigmoid_clamping
                                           ? sigmoid(-sdf_value * sdf_scale)
-                                          : clamp(-sdf_value * sdf_scale + 0.5f, 0.0f, 1.0f))
+                                          : clamp(-sdf_value * sdf_scale + 0.5f, 0.0f, 0.9999f))
                                    : float(sdf_value <= 0.0f);
     *alpha_output = alpha;
 
@@ -658,7 +658,7 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
         if (use_sigmoid_clamping)
             dAlpha_dSDF = alpha_val * (1.0f - alpha_val) * -sdf_scale;
         else
-            dAlpha_dSDF = 0.0f < alpha_val && alpha_val < 1.0f ? -sdf_scale : 0.0f;
+            dAlpha_dSDF = 0.0f < alpha_val && alpha_val < 0.9999f ? -sdf_scale : 0.0f;
     }
     float dL_dSDF = *grad_alpha * dAlpha_dSDF + (grad_sdf ? *grad_sdf : 0.0f);
 

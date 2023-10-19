@@ -43,10 +43,6 @@ __global__ void compose_forward_kernel(float *__restrict__ density_output,
 #pragma unroll
         for (int i = 0; i < color_dim; ++i)
             color[i] += colors[idx_stroke * color_dim + i] * weight;
-
-        // Early termination
-        if (T == 0.0f)
-            break;
     }
 
     // Compute final color
@@ -102,22 +98,18 @@ __global__ void compose_backward_kernel(float *__restrict__ grad_alphas,
 #pragma unroll
         for (int i = 0; i < color_dim; ++i)
             color[i] += colors[idx_stroke * color_dim + i] * weight;
-
-        // Early termination
-        if (T == 0.0f)
-            break;
     }
 
     // Load gradients
     float dL_ddensity = grad_density_output[idx_point];
     float dL_dcolor[color_dim];
-    float final_opacity = 1.0f + 1e-6f - T;  // (1 - T_n)
+    float final_opacity = 1.0f + 1e-6f - T;         // (1 - T_n)
     float final_color_scale = 1.0f / final_opacity; // 1 / (1 - T_n)
 #pragma unroll
     for (int i = 0; i < color_dim; ++i)
     {
         float scaled_color = color[i] * final_color_scale;
-        bool in_range = 0.0f < scaled_color && scaled_color < 1.0f;
+        bool in_range = 0.0f <= scaled_color && scaled_color <= 1.0f;
         dL_dcolor[i] = in_range ? grad_color_output[idx_point * color_dim + i] : 0.0f;
     }
 
@@ -149,25 +141,18 @@ __global__ void compose_backward_kernel(float *__restrict__ grad_alphas,
         }
 
         // Calculate gradients for alphas
-        if (alpha <= 1.0f - 1e-7f)
-        {
-            float scale_dT_dalpha = 1.0f / (1.0f - alpha);
-            float density_suffix = density - density2;
-            float dL_dalpha = dL_ddensity * (T * density_params[idx_stroke] - density_suffix) * scale_dT_dalpha;
+        float scale_dT_dalpha = 1.0f / max(1.0f - alpha, 1e-6f);
+        float density_suffix = density - density2;
+        float dL_dalpha = dL_ddensity * (T * density_params[idx_stroke] - density_suffix) * scale_dT_dalpha;
 
-            scale_dT_dalpha *= final_color_scale * final_color_scale;
+        scale_dT_dalpha *= final_color_scale * final_color_scale;
 #pragma unroll
-            for (int i = 0; i < color_dim; ++i)
-            {
-                float color_suffix = color[i] - color2[i];
-                dL_dalpha += dL_dcolor[i] * (T * colors[idx_stroke * color_dim + i] * (final_opacity - alpha) - color_suffix) * scale_dT_dalpha;
-            }
-            atomicAdd(grad_alphas + idx_stroke, dL_dalpha);
+        for (int i = 0; i < color_dim; ++i)
+        {
+            float color_suffix = color[i] - color2[i];
+            dL_dalpha += dL_dcolor[i] * (T * colors[idx_stroke * color_dim + i] * (final_opacity - alpha) - color_suffix) * scale_dT_dalpha;
         }
-
-        // Early termination
-        if (T == 0.0f)
-            break;
+        atomicAdd(grad_alphas + idx_stroke, dL_dalpha);
     }
 }
 
