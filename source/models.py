@@ -488,7 +488,7 @@ class StrokeField(nn.Module):
     init_num_strokes: int = 10  # The number of strokes to initialize.
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
-    max_density: float = 50.  # The maximum density of the strokes.
+    max_density: float = 25.  # The maximum density of the strokes.
     sdf_delta: float = 0.1  # How much to dilate the sdf boundary.
     sdf_delta_eval: float = 0.05  # If zero, use hard sdf bounds for eval.
     use_sigmoid_clamping: bool = False  # If True, use sigmoid for soft clamping.
@@ -507,10 +507,10 @@ class StrokeField(nn.Module):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-        self.sdf, self.d_shape, self.shape_param_ranges, \
-            self.shape_param_sampler = strokes.stroke_sdf(self.shape_type)
-        self.color, self.d_color, self.color_param_ranges, \
-            self.color_param_sampler = strokes.stroke_color(self.color_type)
+        # self.sdf, self.d_shape, self.shape_param_ranges, \
+        #     self.shape_param_sampler = strokes.stroke_sdf(self.shape_type)
+        # self.color, self.d_color, self.color_param_ranges, \
+        #     self.color_param_sampler = strokes.stroke_color(self.color_type)
         self.stroke_fn, self.d_shape, self.d_color, self.shape_param_ranges, \
             self.color_param_ranges, self.shape_param_sampler, self.color_param_sampler = \
             get_stroke(self.shape_type, self.color_type)

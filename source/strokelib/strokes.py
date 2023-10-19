@@ -14,6 +14,9 @@ _base_sdf_id = {
     'unit_round_cube': 2,
     'unit_capped_torus': 3,
     'unit_capsule': 4,
+    'unit_line': 5,
+    'unit_triprism': 6, 
+    'unit_octahedron': 7,
 }
 
 _sdf_dict = {
@@ -25,7 +28,10 @@ _sdf_dict = {
     'obb': ('unit_cube', [], None, True, True, False, True),
     'roundcube': ('unit_round_cube', [(0, 1)], lambda _: torch.rand(1), True, True, True, False),
     'cappedtorus': ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))), (0, None)], lambda _: torch.rand(2), True, True, True, False),
-    'capsule': ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1)+1, True, True, True, False),
+    'capsule': ('unit_capsule', [(1, None)], lambda _: torch.rand(1)+1, True, True, True, False),
+    'line': ('unit_line', [(1, None),(0,1)], lambda _: torch.rand(2), True, True, True, False),
+    'triprism': ('unit_triprism', [(0,None)], lambda _: torch.rand(1), True, True, True, False),
+    'octahedron': ('unit_octahedron', [], None, True, True, True, False),
 }
 
 _color_dict = {

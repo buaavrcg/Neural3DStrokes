@@ -21,7 +21,10 @@ enum BaseSDFType
     UNIT_CUBE = 1,
     UNIT_ROUND_CUBE = 2,
     UNIT_CAPPED_TORUS = 3,   
-    UNIT_CAPSULE = 4,   
+    UNIT_CAPSULE = 4, 
+    UNIT_LINE = 5, 
+    UNIT_TRIPRISM = 6, 
+    UNIT_OCTAHEDRON = 7,
     NB_BASE_SDFS,
 };
 
@@ -374,6 +377,97 @@ struct BaseSDF<UNIT_CAPSULE>
 
 };
 
+template <> 
+struct BaseSDF<UNIT_LINE>
+{
+    __device__ static float sdf(float3 pos,const float *params){
+        float t=pos.y/params[0];
+        t = fminf(fmaxf(t, 0.0f), 1.0f);
+        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
+        float r=(1+params[1])*t+(1-params[1])*(1-t);
+        return sqrtf(pos.x*pos.x+p_y*p_y+pos.z*pos.z+1e-8f)-r;
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params,float grad_SDF,float3 pos,const float *params){
+        float t=pos.y/params[0];
+        t = fminf(fmaxf(t, 0.0f), 1.0f);
+        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
+        float r=(1+params[1])*t+(1-params[1])*(1-t);
+        float inv_norm = rsqrt(pos.x*pos.x+p_y*p_y+pos.z*pos.z+1e-8f);
+        float grad_t_y=t>0.0f&&t<1.0f?1.0f/params[0]:0.0f;
+        float3 grad_t_xyz=make_float3(0.0f,grad_t_y,0.0f);
+        float grad_r_t=2*params[1];
+        float3 grad_r=grad_r_t*grad_t_xyz;
+        float grad_p_y=p_y==0?0.0f:1.0f;
+        float3 grad_p_xyz=make_float3(pos.x,grad_p_y*p_y,pos.z)*inv_norm;
+        float3 grad_xyz=grad_p_xyz-grad_r;
+
+        float grad_t_p_0=t>0.0f&&t<1.0f?-1.0f/(params[0]*params[0]):0.0f;
+        float grad_r_p_0=grad_r_t*grad_t_p_0;
+        float grad_y_p_0=pos.y>params[0]?-1.0f:0.0f;
+        float grad_dis_p_0=grad_y_p_0*p_y*inv_norm;
+        atomicAdd(grad_params+0, -grad_SDF*grad_dis_p_0-grad_r_p_0);
+
+        float grad_r_p_1=2*t-1.0f;
+        float grad_dis_p_1=0.0f;
+        atomicAdd(grad_params+1, -grad_SDF*(grad_dis_p_1-grad_r_p_1));
+
+        return grad_xyz;
+    }
+};
+
+template <>
+struct BaseSDF<UNIT_TRIPRISM>
+{
+    __device__ static float sdf(float3 pos,const float *params){
+        float3 q=fabs(pos);
+        return fmaxf(q.y-params[0],fmaxf(q.x*0.866025f+pos.z*0.5f,-pos.z)-0.5f);
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params,float grad_SDF,float3 pos,const float *params){
+        float3 q=fabs(pos);
+        float3 grad_q=make_float3(pos.x<0.0f?-1.0f:1.0f,pos.y<0.0f?-1.0f:1.0f,pos.z<0.0f?-1.0f:1.0f);
+        float grad_x=0.0f;
+        float grad_y=0.0f;
+        float grad_z=0.0f;
+        if(q.x*0.866025f+pos.z*0.5f>-pos.z){
+            if(q.y-params[0]>q.x*0.866025f+pos.z*0.5f-0.5f){
+                grad_y=grad_q.y;
+                atomicAdd(grad_params+0, -grad_SDF);
+            }
+            else{
+                grad_x=0.866025f*grad_q.x;
+                grad_z=0.5f;
+            }
+        }
+        else{
+            if(q.y-params[0]>-pos.z-0.5f){
+                grad_y=grad_q.y;
+                atomicAdd(grad_params+0, -grad_SDF);
+            }
+            else{
+                grad_z=-1.0f;
+            }
+        }
+        return make_float3(grad_x,grad_y,grad_z);
+    }
+};
+
+template <>
+struct BaseSDF<UNIT_OCTAHEDRON>{
+    __device__ static float sdf(float3 pos,const float *params){
+        float3 p_abs=fabs(pos);
+        return (p_abs.x+p_abs.y+p_abs.z-1.0f)*0.57735027f;
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params,float grad_SDF,float3 pos,const float *params){
+        float3 p_abs=fabs(pos);
+        float grad_x=pos.x<0.0f?-0.57735027f:0.57735027f;
+        float grad_y=pos.y<0.0f?-0.57735027f:0.57735027f;
+        float grad_z=pos.z<0.0f?-0.57735027f:0.57735027f;
+        return make_float3(grad_x,grad_y,grad_z);
+    }
+};
 /////////////////////////////////////////////////////////////////////
 // Color Fields
 /////////////////////////////////////////////////////////////////////

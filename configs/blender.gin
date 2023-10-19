@@ -1,4 +1,4 @@
-Config.exp_name = 'test_stroke_15_errorpoint'
+Config.exp_name = 'test_last_lego'
 Config.dataset_loader = 'blender'
 Config.data_dir = 'data/nerf_synthetic/lego'
 Config.near = 2
@@ -20,7 +20,7 @@ Model.num_nerf_samples = 32
 
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
-StrokeField.shape_type = 'roundcube'
+StrokeField.shape_type = 'triprism'
 StrokeField.use_sigmoid_clamping = False
 
 MLP.bbox_size = 3.0
