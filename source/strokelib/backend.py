@@ -37,6 +37,7 @@ _backend = load(name='_strokelib',
                 verbose=True,
                 sources=[os.path.join(_src_path, 'src', f) for f in [
                     'strokes.cu',
+                    'compositing.cu',
                     'bindings.cpp',
                 ]])
 

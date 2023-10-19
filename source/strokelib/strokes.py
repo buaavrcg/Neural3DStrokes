@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
@@ -27,8 +28,11 @@ _sdf_dict = {
     'aabb': ('unit_cube', [], None, True, False, False, True),
     'obb': ('unit_cube', [], None, True, True, False, True),
     'roundcube': ('unit_round_cube', [(0, 1)], lambda _: torch.rand(1), True, True, True, False),
-    'cappedtorus': ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))), (0, None)], lambda _: torch.rand(2), True, True, True, False),
-    'capsule': ('unit_capsule', [(1, None)], lambda _: torch.rand(1)+1, True, True, True, False),
+    'cappedtorus':
+    ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))),
+                           (0, None)], lambda _: torch.rand(2), True, True, True, False),
+    'capsule':
+    ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1) + 1, True, True, True, False),
     'line': ('unit_line', [(1, None),(0,1)], lambda _: torch.rand(2), True, True, True, False),
     'triprism': ('unit_triprism', [(0,None)], lambda _: torch.rand(1), True, True, True, False),
     'octahedron': ('unit_octahedron', [], None, True, True, True, False),
@@ -135,16 +139,18 @@ class _stroke_fn(Function):
         use_sigmoid_clamping = ctx.use_sigmoid_clamping
         pre_shape = ctx.pre_shape
 
-        grad_alpha = grad_alpha.contiguous().reshape(-1, num_strokes)
-        grad_color = grad_color.contiguous().reshape(-1, num_strokes, _color_dim[color_id])
+        grad_alpha = grad_alpha.reshape(-1, num_strokes)
+        grad_color = grad_color.reshape(-1, num_strokes, _color_dim[color_id])
         if grad_sdf is not None:
-            grad_sdf = grad_sdf.contiguous().reshape(-1, num_strokes)
+            grad_sdf = grad_sdf.reshape(-1, num_strokes)
         else:
             grad_sdf = torch.zeros(0, dtype=x.dtype, device=x.device)
 
         grad_shape_params = torch.zeros_like(shape_params)
         grad_color_params = torch.zeros_like(color_params)
-        grad_x = torch.zeros(x.shape if ctx.needs_input_grad[0] else 0, dtype=x.dtype, device=x.device)
+        grad_x = torch.zeros(x.shape if ctx.needs_input_grad[0] else 0,
+                             dtype=x.dtype,
+                             device=x.device)
         _backend.stroke_backward(grad_shape_params, grad_color_params, grad_x, grad_alpha,
                                  grad_color, grad_sdf, x, alpha_output, shape_params, color_params,
                                  sdf_id, color_id, sdf_delta, use_sigmoid_clamping)
@@ -187,7 +193,7 @@ def get_stroke(shape_type: str, color_type: str):
         trans_max = torch.tensor([0.4, 0.4, 0.4])
         trans_range = torch.abs(trans_max - trans_min)
         scale_range = torch.square(trans_range).sum().sqrt()
-        scale_t = (1 - train_frac) ** 1.5
+        scale_t = (1 - train_frac)**1.5
         scale_min = 0.02 + 0.13 * scale_t
         scale_max = 0.04 + 0.21 * scale_t
         scale_min = scale_min * scale_range
@@ -218,3 +224,78 @@ def get_stroke(shape_type: str, color_type: str):
     dim_shape = len(shape_param_ranges)
     dim_color = len(color_param_ranges)
     return stroke_fn, dim_shape, dim_color, shape_param_ranges, color_param_ranges, shape_sampler, color_sampler
+
+
+class _compositing_fn(Function):
+    @staticmethod
+    @custom_fwd
+    def forward(ctx, alphas: torch.Tensor, colors: torch.Tensor, density_params: torch.Tensor):
+        """Composite a batch of strokes."""
+        assert alphas.ndim >= 2, 'alphas must have shape [..., num_strokes]'
+        assert colors.ndim >= 3, 'colors must have shape [..., num_strokes, color_dim]'
+        assert density_params.ndim == 1, 'density_params must have shape [num_strokes]'
+        assert alphas.shape[:-1] == colors.shape[:-2], \
+            'alphas and colors must have the same shape except the last two dimensions'
+        assert alphas.shape[-1] == colors.shape[-2] == density_params.shape[0], \
+            'alphas, colors and density_params must have the same number of strokes'
+
+        pre_shape = alphas.shape[:-1]
+        num_strokes = density_params.shape[0]
+        alphas = alphas.contiguous().reshape(-1, num_strokes).float()
+        colors = colors.contiguous().reshape(-1, num_strokes, colors.shape[-1]).float()
+        density_params = density_params.contiguous().float()
+
+        density_output = torch.empty(alphas.shape[0], dtype=alphas.dtype, device=alphas.device)
+        color_output = torch.empty((colors.shape[0], colors.shape[-1]),
+                                   dtype=colors.dtype,
+                                   device=colors.device)
+        _backend.compose_forward(density_output, color_output, alphas, colors, density_params)
+        if ctx.needs_input_grad[0] or ctx.needs_input_grad[1] or ctx.needs_input_grad[2]:
+            ctx.save_for_backward(alphas, colors, density_params)
+            ctx.pre_shape = pre_shape
+
+        density_output = density_output.reshape(*pre_shape)
+        color_output = color_output.reshape(*pre_shape, -1)
+        return density_output, color_output
+
+    @staticmethod
+    @once_differentiable
+    @custom_bwd
+    def backward(ctx, grad_density: torch.Tensor, grad_color: torch.Tensor):
+        alphas, colors, density_params = ctx.saved_tensors
+        pre_shape = ctx.pre_shape
+        num_strokes = density_params.shape[0]
+
+        if grad_density is not None:
+            grad_density = grad_density.reshape(-1)
+        else:
+            grad_density = torch.zeros(0, dtype=alphas.dtype, device=alphas.device)
+        if grad_color is not None:
+            grad_color = grad_color.reshape(-1, colors.shape[-1])
+        else:
+            grad_color = torch.zeros(0, dtype=colors.dtype, device=colors.device)
+
+        grad_alphas = torch.zeros_like(alphas)
+        grad_colors = torch.zeros_like(colors)
+        grad_density_params = torch.zeros_like(density_params)
+        _backend.compose_backward(grad_alphas, grad_colors, grad_density_params, grad_density,
+                                  grad_color, alphas, colors, density_params)
+
+        grad_alphas = grad_alphas.reshape(*pre_shape, num_strokes)
+        grad_colors = grad_colors.reshape(*pre_shape, num_strokes, colors.shape[-1])
+        return grad_alphas, grad_colors, grad_density_params
+
+
+def compose_strokes(alphas: torch.Tensor, colors: torch.Tensor, density_params: torch.Tensor):
+    """Composite a batch of strokes.
+
+    Args:
+        alphas (torch.Tensor): Alpha values of shape [..., num_strokes].
+        colors (torch.Tensor): Color values of shape [..., num_strokes, color_dim].
+        density_params (torch.Tensor): Density parameters of shape [num_strokes].
+        
+    Returns:
+        density (torch.Tensor): Density values of shape [...].
+        color (torch.Tensor): Color values of shape [..., color_dim].
+    """
+    return _compositing_fn.apply(alphas, colors, density_params)

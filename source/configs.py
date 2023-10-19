@@ -71,7 +71,7 @@ class Config:
     hash_decay_mult: float = 0.1  # Mult. for the loss on the hash feature decay.
     
     lr_init: float = 0.01  # The initial learning rate.
-    lr_final: float = 0.005  # The final learning rate.
+    lr_final: float = 0.003  # The final learning rate.
     lr_delay_steps: int = 0  # The number of "warmup" learning steps.
     lr_delay_mult: float = 1e-8  # How much sever the "warmup" should be.
     adam_beta1: float = 0.9  # Adam's beta2 hyperparameter.
