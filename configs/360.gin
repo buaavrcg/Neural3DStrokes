@@ -1,0 +1,26 @@
+Config.exp_name = 'test_360'
+Config.dataset_loader = 'llff'
+Config.data_dir = 'data/nerf_real_360/vasedeck'
+Config.near = 0.2
+Config.far = 1e6
+Config.factor = 0
+Config.train_render_every = 500
+Config.max_steps = 30000
+Config.mask_loss_mult = 0.01
+Config.sinkhorn_loss_mult = 0.0
+# Config.lr_init = 0.005
+# Config.lr_final = 0.001
+# Config.lr_delay_steps = 500
+
+Model.use_stroke_field = True
+Model.raydist_fn = 'power_transformation'
+Model.opaque_background = True
+Model.num_levels = 2
+Model.num_prop_samples = 64
+Model.num_nerf_samples = 32
+
+StrokeField.warp_fn = 'contract'
+StrokeField.shape_type = 'line'
+StrokeField.use_sigmoid_clamping = False
+
+MLP.warp_fn = 'contract'

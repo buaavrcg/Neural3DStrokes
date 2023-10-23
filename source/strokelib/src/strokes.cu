@@ -15,6 +15,7 @@ enum BaseSDFType
     UNIT_LINE = 5, 
     UNIT_TRIPRISM = 6, 
     UNIT_OCTAHEDRON = 7,
+    UNIT_BEZIER = 8,
     NB_BASE_SDFS,
 };
 
@@ -372,7 +373,8 @@ struct BaseSDF<UNIT_LINE>
 {
     __device__ static float sdf(float3 pos,const float *params){
         float t=pos.y/params[0];
-        t = fminf(fmaxf(t, 0.0f), 1.0f);
+        //t = fminf(fmaxf(t, 0.0f), 1.0f);
+        t = clamp(t, 0.0f, 1.0f);
         float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
         float r=(1+params[1])*t+(1-params[1])*(1-t);
         return sqrtf(pos.x*pos.x+p_y*p_y+pos.z*pos.z+1e-8f)-r;
@@ -456,6 +458,216 @@ struct BaseSDF<UNIT_OCTAHEDRON>{
         float grad_y=pos.y<0.0f?-0.57735027f:0.57735027f;
         float grad_z=pos.z<0.0f?-0.57735027f:0.57735027f;
         return make_float3(grad_x,grad_y,grad_z);
+    }
+};
+
+template <>
+struct BaseSDF<UNIT_BEZIER>{
+    __device__ static float sdf_bezier(float3 pos, float3 A, float3 B, float3 C, float r1, float r2) {
+        float2 res=make_float2(0.0f,0.0f);
+
+        float3 a=B-A;
+        float3 b=A-2.0f*B+C;
+        float3 c=a*2.0f;
+        float3 d=A-pos;
+
+        float kk=1.0f/dot(b,b);
+        float kx=kk*dot(a,b);
+        float ky=kk*(2.0f*dot(a,a)+dot(d,b))/3.0f;
+        float kz=kk*dot(d,a);
+
+        float p=ky-kx*kx;
+        float p3=p*p*p;
+        float q=kx*(2.0f*kx*kx-3.0f*ky)+kz;
+        float h=q*q+4.0f*p3;
+
+        if(h>=0.0f){
+            h=sqrtf(h+1e-8f);
+            float2 x=make_float2((h-q)*0.5f,-(h+q)*0.5f);
+            float2 uv = make_float2(
+                copysignf(powf(fabs(x.x),1.0f/3.0f),x.x),
+                copysignf(powf(fabs(x.y),1.0f/3.0f),x.y)
+            );
+            float t=clamp((uv.x+uv.y)-kx,0.0,1.0);
+
+            res=make_float2(dot(d+(c+b*t)*t,d+(c+b*t)*t),t);
+        }
+        else{
+            float z=sqrtf(-p+1e-8f);
+            float v=acosf(q/(p*z*2.0f+1e-8f))/3.0f;
+            float m=cosf(v);
+            float n=sinf(v)*1.732050808f;
+            float3 t = clamp(make_float3(m+n,-n-m,n-m)*z-kx,0.0f,1.0f);
+
+            float3 dis3 = d+(c+b*t.x)*t.x;
+            float dis = dot(dis3,dis3);
+            res = make_float2(dis,t.x);
+
+            dis3 = d+(c+b*t.y)*t.y;
+            dis = dot(dis3,dis3);
+            res = dis<res.x?make_float2(dis,t.y):res;
+        }
+
+        res.x=sqrtf(res.x+1e-8f);
+        float r = lerp(r1, r2, res.y);
+        return res.x - r;
+    }
+
+
+    __device__ static float sdf(float3 pos,const float *params){
+        float3 A=make_float3(params[0],params[1],params[2]);
+        float3 B=make_float3(params[3],params[4],params[5]);
+        float3 C=make_float3(params[6],params[7],params[8]);
+        return sdf_bezier(pos, A, B, C, params[9], params[10]);
+    }
+
+    // __device__ static float3 other_grad_sdf(float *grad_params,float grad_SDF,float3 pos,const float *params){
+    //     float3 A=make_float3(params[0],params[1],params[2]);
+    //     float3 B=make_float3(params[3],params[4],params[5]);
+    //     float3 C=make_float3(params[6],params[7],params[8]);
+    //     float2 res=make_float2(0.0f,0.0f);
+
+    //     float3 a=B-A;
+    //     float3 b=A-2.0f*B+C;
+    //     float3 c=a*2.0f;
+    //     float3 d=A-pos;
+
+    //     float kk=1.0f/dot(b,b);
+    //     float kx=kk*dot(a,b);
+    //     float ky=kk*(2.0f*dot(a,a)+dot(d,b))/3.0f;
+    //     float kz=kk*dot(d,a);
+
+    //     float p=ky-kx*kx;
+    //     float p3=p*p*p;
+    //     float q=kx*(2.0f*kx*kx-3.0f*ky)+kz;
+    //     float h=q*q+4.0f*p3;
+
+    //     if(h>=0.0f){
+    //         h=sqrtf(h+1e-8f);
+    //         float2 x=make_float2((h-q)*0.5f,-(h+q)*0.5f);
+    //         float2 uv = make_float2(
+    //             copysignf(powf(fabs(x.x),1.0f/3.0f),x.x),
+    //             copysignf(powf(fabs(x.y),1.0f/3.0f),x.y)
+    //         );
+    //         float t=clamp((uv.x+uv.y)-kx,0.0,1.0);
+
+    //         res=make_float2(dot(d+(c+b*t)*t,d+(c+b*t)*t),t);
+
+    //         float ansx=res.x;
+    //         float ansy=res.y;
+    //         float grad_d_xyz=-1.0f;
+    //         if(t==0.0f||t==1.0f){
+    //             float3 grad_ansx_xyz=grad_d_xyz*2.0f*d;
+    //             float3 grad_ansy_xyz=make_float3(0.0f,0.0f,0.0f);
+    //         }
+    //         else {
+    //             float3 m=d+(c+b*t)*t;
+    //             float3 grad_ansx_m=2.0f*m;
+    //             float grad_m_d=1.0f;
+    //             float3 grad_m_t=c+2.0f*b*t;
+    //             float grad_d_xyz=-1.0f;
+    //             float grad_uvx_h=copysignf(powf(x.x,-2.0f/3.0f),x.x)/3.0f;
+    //             float grad_uvy_h=-1.0f*copysignf(powf(x.y,-2.0f/3.0f),x.y)/3.0f;
+    //             float grad_h_q=2.0f*q;
+    //             float grad_uvx_q=-1.0f*grad_uvx_h;
+    //             float grad_uvy_q=-1.0f*grad_uvy_h;
+    //             float grad_q_xyz=kk*a*(-1.0f);
+    //             float grad_ansx_xyz=grad_ansx_m*(grad_m_d+grad_m_t*grad_)
+    //         }
+    //     }
+    //     else{
+    //         float z=sqrtf(-p);
+    //         float v=acosf(q/(p*z*2.0f+1e-8f))/3.0f;
+    //         float m=cosf(v);
+    //         float n=sinf(v)*1.732050808f;
+    //         float3 t = clamp(make_float3(m+n,-m-n,n-m)*z-kx,0.0f,1.0f);
+
+    //         float dis=dot(d+(c+b*t.x)*t.x,d+(c+b*t.x)*t.x);
+    //         res = make_float2(dis,t.x);
+
+    //         dis=dot(d+(c+b*t.y)*t.y,d+(c+b*t.y)*t.y);
+
+    //         if(dis<res.x){
+    //             res = make_float2(dis,t.y);
+    //             float ansx=res.x;
+    //             float ansy=res.y;
+    //             float grad_d_xyz=-1.0f;
+    //             if(t.y==0.0f||t.y==1.0f){
+    //                 float3 grad_ansx_xyz=grad_d_xyz*2.0f*d;
+    //                 float3 grad_ansy_xyz=make_float3(0.0f,0.0f,0.0f);
+    //             }
+    //             else {
+    //                 float3 m=d+(c+b*t.y)*t.y;
+    //                 float3 grad_ansx_m=2.0f*m;
+    //                 float grad_m_d=1.0f;
+    //                 float3 grad_m_t=c+2.0f*b*t.y;
+    //                 float grad_d_xyz=-1.0f;
+    //                 float grad_ty_n=-1.0f*z;
+    //                 float grad_ty_m=-1.0f*z;
+    //                 float grad_n_v=cosf(v)*1.732050808f;
+    //                 float grad_m_v=-sinf(v);
+    //                 float grad_v_q=1.0f/(p*z*2.0f+1e-8f)*(-1.0f)*rsqrtf(1.0f-q*q/(p*p*z*z*4.0f)+1e-8f)/3.0f;
+    //                 float grad_q_xyz=kk*a*(-1.0f);
+    //             }
+    //         }
+    //         else {
+    //             float ansx=res.x;
+    //             float ansy=res.y;
+    //             float grad_d_xyz=-1.0f;
+    //             if(t.x==0.0f||t.x==1.0f){
+    //                 float3 grad_ansx_xyz=grad_d_xyz*2.0f*d;
+    //                 float3 grad_ansy_xyz=make_float3(0.0f,0.0f,0.0f);
+    //             }
+    //             else {
+                    
+    //             }
+    //         }
+
+    //     }
+
+    // }
+
+    template <int i, int j>
+    __device__ static float get_param(const float *params, float delta) {
+        return params[j] + (j == i ? delta : 0.0f);
+    }
+
+    template <int i>
+    __device__ static float sdf_delta(float3 pos,const float *params, float delta){
+        float3 A=make_float3(get_param<i, 0>(params, delta),get_param<i, 1>(params, delta),get_param<i, 2>(params, delta));
+        float3 B=make_float3(get_param<i, 3>(params, delta),get_param<i, 4>(params, delta),get_param<i, 5>(params, delta));
+        float3 C=make_float3(get_param<i, 6>(params, delta),get_param<i, 7>(params, delta),get_param<i, 8>(params, delta));
+        return sdf_bezier(pos, A, B, C, get_param<i, 9>(params, delta), get_param<i, 10>(params, delta));
+    }
+
+    template <int i>
+    __device__ static float grad_param_i(float3 pos, const float *params, float delta) {
+        float sdf_positive = sdf_delta<i>(pos, params, +delta);
+        float sdf_negative = sdf_delta<i>(pos, params, -delta);
+        float grad_params_i = (sdf_positive - sdf_negative) / (2.0f * delta);
+        return grad_params_i;
+    }
+    
+    __device__ static float3 grad_sdf(float *grad_params,float grad_SDF,float3 pos,const float *params){
+        float delta=1e-4f;
+
+        atomicAdd(grad_params+0, grad_SDF*grad_param_i<0>(pos,params,delta));
+        atomicAdd(grad_params+1, grad_SDF*grad_param_i<1>(pos,params,delta));
+        atomicAdd(grad_params+2, grad_SDF*grad_param_i<2>(pos,params,delta));
+        atomicAdd(grad_params+3, grad_SDF*grad_param_i<3>(pos,params,delta));
+        atomicAdd(grad_params+4, grad_SDF*grad_param_i<4>(pos,params,delta));
+        atomicAdd(grad_params+5, grad_SDF*grad_param_i<5>(pos,params,delta));
+        atomicAdd(grad_params+6, grad_SDF*grad_param_i<6>(pos,params,delta));
+        atomicAdd(grad_params+7, grad_SDF*grad_param_i<7>(pos,params,delta));
+        atomicAdd(grad_params+8, grad_SDF*grad_param_i<8>(pos,params,delta));
+        atomicAdd(grad_params+9, grad_SDF*grad_param_i<9>(pos,params,delta));
+        atomicAdd(grad_params+10, grad_SDF*grad_param_i<10>(pos,params,delta));
+
+        float grad_x=(sdf(pos+make_float3(delta,0.0f,0.0f),params)-sdf(pos-make_float3(delta,0.0f,0.0f),params))/(2.0f*delta);
+        float grad_y=(sdf(pos+make_float3(0.0f,delta,0.0f),params)-sdf(pos-make_float3(0.0f,delta,0.0f),params))/(2.0f*delta);
+        float grad_z=(sdf(pos+make_float3(0.0f,0.0f,delta),params)-sdf(pos-make_float3(0.0f,0.0f,delta),params))/(2.0f*delta);
+        return make_float3(grad_x,grad_y,grad_z);
+
     }
 };
 /////////////////////////////////////////////////////////////////////

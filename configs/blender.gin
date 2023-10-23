@@ -1,27 +1,30 @@
-Config.exp_name = 'test_last_lego'
+Config.exp_name = 'test_new_lego_bezier_forward_3'
 Config.dataset_loader = 'blender'
 Config.data_dir = 'data/nerf_synthetic/lego'
 Config.near = 2
 Config.far = 6
 Config.factor = 2
-Config.train_render_every = 500
+Config.train_render_every = 100
 Config.max_steps = 30000
 Config.mask_loss_mult = 0.01
 Config.sinkhorn_loss_mult = 0.0
-# Config.lr_init = 0.005
-# Config.lr_final = 0.001
+Config.data_loss_mult = 1.0
+# Config.lr_init = 0.00000001
+# Config.lr_final = 0.0000000001
 # Config.lr_delay_steps = 500
 
 Model.use_stroke_field = True
 Model.raydist_fn = None
-Model.num_levels = 2
+Model.num_levels = 1
 Model.num_prop_samples = 64
-Model.num_nerf_samples = 32
+Model.num_nerf_samples = 128
 
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
-StrokeField.shape_type = 'triprism'
+StrokeField.shape_type = 'bezier'
 StrokeField.use_sigmoid_clamping = False
+StrokeField.max_num_strokes = 10
+StrokeField.init_num_strokes = 10
 
 MLP.bbox_size = 3.0
 MLP.warp_fn = None
