@@ -1,4 +1,4 @@
-Config.exp_name = 'test_stroke_15_fixedbrushrgb'
+Config.exp_name = 'test_stroke_22_scapsule'
 Config.dataset_loader = 'blender'
 Config.data_dir = 'data/nerf_synthetic/lego'
 Config.near = 2
@@ -15,16 +15,16 @@ Config.data_loss_mult = 1.0
 
 Model.use_stroke_field = True
 Model.raydist_fn = None
-Model.num_levels = 1
-Model.num_prop_samples = 64
-Model.num_nerf_samples = 128
+Model.num_levels = 2
+Model.num_prop_samples = 32
+Model.num_nerf_samples = 32
 
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
-StrokeField.shape_type = 'ellipsoid'
-StrokeField.color_type = 'fixed_brush_rgb'
+StrokeField.shape_type = 'scapsule'
+StrokeField.color_type = 'constant_rgb'
 StrokeField.use_sigmoid_clamping = True
-StrokeField.max_num_strokes = 10
+StrokeField.max_num_strokes = 500
 StrokeField.init_num_strokes = 10
 
 MLP.bbox_size = 3.0

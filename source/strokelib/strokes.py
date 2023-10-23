@@ -16,7 +16,7 @@ _base_sdf_id = {
     'unit_capped_torus': 3,
     'unit_capsule': 4,
     'unit_line': 5,
-    'unit_triprism': 6, 
+    'unit_triprism': 6,
     'unit_octahedron': 7,
     'unit_bezier': 8,
 }
@@ -33,11 +33,18 @@ _sdf_dict = {
     ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))),
                            (0, None)], lambda _: torch.rand(2), True, True, True, False),
     'capsule':
-    ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1) + 1, True, True, True, False),
-    'line': ('unit_line', [(1, None),(0,0)], lambda _: torch.zeros(2), True, True, True, False),
-    'triprism': ('unit_triprism', [(0,None)], lambda _: torch.rand(1), True, True, True, False),
+    ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1) + 0.5, True, True, True, False),
+    'scapsule':
+    ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1) + 0.5, True, True, False, True),
+    'line': ('unit_line', [
+        (0.5, None), (0, 1)
+    ], lambda _: torch.cat([torch.rand(1) * 2.0 + 0.5, torch.rand(1)]), True, True, True, False),
+    'triprism': ('unit_triprism', [(0, None)], lambda _: torch.rand(1), True, True, True, False),
     'octahedron': ('unit_octahedron', [], None, True, True, True, False),
-    'bezier': ('unit_bezier', [(None, None),(None, None),(None, None),(None, None),(None, None),(None, None),(None, None),(None, None),(None,None),(0,None),(0,None)], lambda _: torch.cat([torch.randn(9) * 0.5, torch.ones(2) * 0.02]), False , False, False, False),
+    'bezier':
+    ('unit_bezier', [(None, None), (None, None), (None, None), (None, None), (None, None),
+                     (None, None), (None, None), (None, None), (None, None), (0, None), (0, None)],
+     lambda _: torch.cat([torch.randn(9) * 0.5, torch.ones(2) * 0.02]), False, False, False, False),
 }
 
 _color_dict = {

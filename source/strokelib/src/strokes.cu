@@ -349,23 +349,24 @@ struct BaseSDF<UNIT_CAPSULE>
 {
     __device__ static float sdf(float3 pos, const float *params)
     {
-        float p_y = pos.y - fminf(fmaxf(pos.y, 0.0f), params[0]);
-        float3 p_xyz = make_float3(pos.x, p_y, pos.z);
-        float3 p_sq = p_xyz * p_xyz;
+        float h = params[0];
+        pos.y -= clamp(pos.y, -h, h);
+        float3 p_sq = pos * pos;
         return sqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8) - 1.f;
     }
 
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
     {
-        float p_y = pos.y - fminf(fmaxf(pos.y, 0.0f), params[0]);
-        float3 p_xyz = make_float3(pos.x, p_y, pos.z);
-        float3 p_sq = p_xyz * p_xyz;
-        float3 grad_p_xyz = p_xyz * rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8);
-        if (pos.y > params[0])
-        {
-            atomicAdd(grad_params + 0, -grad_SDF * p_y * rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8));
-        }
-        return make_float3(grad_p_xyz.x, grad_p_xyz.y, grad_p_xyz.z);
+        float h = params[0];
+        float pos_y = pos.y;
+        pos.y -= clamp(pos.y, -h, h);
+        float3 p_sq = pos * pos;
+        float3 grad_pos = pos * rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8);
+        if (-h <= pos_y && pos_y <= h)
+            grad_pos.y = 0.0f;
+        else
+            atomicAdd(grad_params + 0, grad_SDF * grad_pos.y * (pos_y > 0.f ? -1.f : 1.f));
+        return grad_pos;
     }
 };
 
@@ -373,39 +374,35 @@ template <>
 struct BaseSDF<UNIT_LINE>
 {
     __device__ static float sdf(float3 pos,const float *params){
-        float t=pos.y/params[0];
-        //t = fminf(fmaxf(t, 0.0f), 1.0f);
-        t = clamp(t, 0.0f, 1.0f);
-        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
-        float r=(1+params[1])*t+(1-params[1])*(1-t);
-        return sqrtf(pos.x*pos.x+p_y*p_y+pos.z*pos.z+1e-8f)-r;
+        float h = params[0];
+        float r_diff = params[1];
+        float t = clamp((pos.y + h) / (2.0f * h), 0.0f, 1.0f);
+        float r = lerp(1.f - r_diff, 1.f + r_diff, t);
+        pos.y -= clamp(pos.y, -h, h);
+        float3 p_sq = pos * pos;
+        return sqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8) - r;
     }
 
     __device__ static float3 grad_sdf(float *grad_params,float grad_SDF,float3 pos,const float *params){
-        float t=pos.y/params[0];
-        t = fminf(fmaxf(t, 0.0f), 1.0f);
-        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
-        float r=(1+params[1])*t+(1-params[1])*(1-t);
-        float inv_norm = rsqrt(pos.x*pos.x+p_y*p_y+pos.z*pos.z+1e-8f);
-        float grad_t_y=t>0.0f&&t<1.0f?1.0f/params[0]:0.0f;
-        float3 grad_t_xyz=make_float3(0.0f,grad_t_y,0.0f);
-        float grad_r_t=2*params[1];
-        float3 grad_r=grad_r_t*grad_t_xyz;
-        float grad_p_y=p_y==0?0.0f:1.0f;
-        float3 grad_p_xyz=make_float3(pos.x,grad_p_y*p_y,pos.z)*inv_norm;
-        float3 grad_xyz=grad_p_xyz-grad_r;
-
-        float grad_t_p_0=t>0.0f&&t<1.0f?-1.0f/(params[0]*params[0]):0.0f;
-        float grad_r_p_0=grad_r_t*grad_t_p_0;
-        float grad_y_p_0=pos.y>params[0]?-1.0f:0.0f;
-        float grad_dis_p_0=grad_y_p_0*p_y*inv_norm;
-        atomicAdd(grad_params+0, -grad_SDF*grad_dis_p_0-grad_r_p_0);
-
-        float grad_r_p_1=2*t-1.0f;
-        float grad_dis_p_1=0.0f;
-        atomicAdd(grad_params+1, -grad_SDF*(grad_dis_p_1-grad_r_p_1));
-
-        return grad_xyz;
+        float h = params[0];
+        float r_diff = params[1];
+        float pos_y = pos.y;
+        float t = clamp((pos.y + h) / (2.0f * h), 0.0f, 1.0f);
+        float r = lerp(1.f - r_diff, 1.f + r_diff, t);
+        pos.y -= clamp(pos.y, -h, h);
+        float3 p_sq = pos * pos;
+        float3 grad_pos = pos * rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8);
+        float grad_param0 = 0.0f;
+        if (-h <= pos_y && pos_y <= h) {
+            grad_pos.y = -r_diff / h;
+            grad_param0 = pos_y * r_diff / (h * h);
+        }
+        else {
+            grad_param0 = grad_pos.y * (pos_y > 0.f ? -1.f : 1.f);
+        }
+        atomicAdd(grad_params + 0, grad_SDF * grad_param0);
+        atomicAdd(grad_params + 1, grad_SDF * (1.f - 2.f * t));
+        return grad_pos;
     }
 };
 
