@@ -71,6 +71,7 @@ class Model(nn.Module):
     std_scale: float = 0.5  # Scale the scale of the standard deviation.
     prop_desired_grid_size = [512, 2048]  # The desired grid size for each proposal level.
     error_field_grid_size: int = 512  # The resolution of the error fields.
+    use_directional_error_field: bool = True  # If True, error field has error value (rgb).
 
     def __init__(self, config=None, **kwargs):
         super().__init__()
@@ -81,7 +82,8 @@ class Model(nn.Module):
         # Construct MLPs. WARNING: Construction order may matter, if MLP weights are
         # being regularized.
         self.nerf = StrokeField() if self.use_stroke_field else NerfMLP()
-        self.error_field = PropMLP(grid_disired_resolution=self.error_field_grid_size)
+        self.error_field = ErrorMLP(grid_disired_resolution=self.error_field_grid_size,
+                                    disable_rgb=not self.use_directional_error_field)
         if self.single_mlp:
             self.prop = self.nerf
         elif self.single_prop:
@@ -243,7 +245,11 @@ class Model(nn.Module):
                     batch['directions'],
                     opaque_background=False,
                 )[0]
-                error = error_weights.sum(dim=-1).unsqueeze(-1)
+                if self.use_directional_error_field:
+                    error_values = error_field_results['rgb']
+                    error = (error_weights[..., None] * error_values).sum(dim=-2)
+                else:
+                    error = error_weights.sum(dim=-1).unsqueeze(-1)
             if not is_prop:
                 rendering['error'] = error
 
@@ -273,6 +279,7 @@ class MLP(nn.Module):
     net_depth_viewdirs: int = 2  # The depth of the second part of ML.
     net_width_viewdirs: int = 256  # The width of the second part of MLP.
     skip_layer_dir: int = 0  # Add a skip connection to 2nd MLP after Nth layers.
+    num_rgb_channels: int = 3  # The number of RGB channels.
     deg_view: int = 4  # Degree of encoding for viewdirs or refdirs.
     use_directional_enc: bool = False  # If True, use IDE to encode directions.
     bottleneck_noise: float = 0.0  # Std. deviation of training noise added to bottleneck.
@@ -339,7 +346,7 @@ class MLP(nn.Module):
                 last_dim_rgb = self.net_width_viewdirs
                 if i == self.skip_layer_dir:
                     last_dim_rgb += input_dim_rgb
-            self.rgb_layer = nn.Linear(last_dim_rgb, 3)
+            self.rgb_layer = nn.Linear(last_dim_rgb, self.num_rgb_channels)
 
     def predict_density(self, coords, no_warp=False):
         """Helper function to output density and rgb feature."""
@@ -367,7 +374,7 @@ class MLP(nn.Module):
             no_warp: bool, if True, don't warp the input coordinates.
 
         Returns:
-            rgb: [..., 3].
+            rgb: [..., num_rgb_channels].
             density: [...].
             normals: [..., 3], or None.
         """
@@ -460,14 +467,6 @@ class MLP(nn.Module):
                     normals=normals,
                     hash_levelwise_mean=hash_levelwise_mean)
 
-    def sample_density(self, coords, no_warp=False):
-        coords = _warp_coords(self.warp_fn, coords, self.bbox_size, no_warp)
-        features = self.encoder(coords, bound=1.0)
-        x = self.density_layer(features)
-        raw_density = x[..., 0]  # Hardcoded to a single channel.
-        density = F.softplus(raw_density + self.density_bias)
-        return density
-
 
 @gin.configurable
 class NerfMLP(MLP):
@@ -481,6 +480,25 @@ class PropMLP(MLP):
 
 
 @gin.configurable
+class ErrorMLP(MLP):
+    num_rgb_channels: int = 1  # The number of RGB channels.
+    grid_level_dim: int = 2
+    grid_log2_hashmap_size: int = 20
+
+    def sample_error(self, coords, no_warp=False):
+        coords = _warp_coords(self.warp_fn, coords, self.bbox_size, no_warp)
+        features = self.encoder(coords, bound=1.0)
+        x = self.density_layer(features)
+        raw_density = x[..., 0]  # Hardcoded to a single channel.
+        density = F.softplus(raw_density + self.density_bias)
+        if self.disable_rgb:
+            return density
+        rgb = torch.sigmoid(self.rgb_premultiplier * self.rgb_layer(x) + self.rgb_bias)
+        rgb = rgb * (1 + 2 * self.rgb_padding) - self.rgb_padding
+        return density * rgb.squeeze(-1)
+
+
+@gin.configurable
 class StrokeField(nn.Module):
     """A vector stroke field."""
     shape_type: str = 'sphere'  # The type of shape function to use.
@@ -488,16 +506,15 @@ class StrokeField(nn.Module):
     init_num_strokes: int = 10  # The number of strokes to initialize.
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
-    max_density: float = 50.  # The maximum density of the strokes.
-    sdf_delta: float = 0.1  # How much to dilate the sdf boundary.
-    sdf_delta_eval: float = 0.05  # If zero, use hard sdf bounds for eval.
+    max_density: float = 30.  # The maximum density of the strokes.
+    sdf_delta: float = 0.2  # How much to dilate the sdf boundary.
+    sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
     use_sigmoid_clamping: bool = False  # If True, use sigmoid for soft clamping.
     disable_density_normals: bool = True  # If True don't compute normals.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
     min_update_interval: int = 2  # The minimum number of steps to add new strokes.
-    error_point_samples: int = 50000  # The number of samples to sample the error field.
-    error_bbox_size: float = 4.  # The side length of the error grid.
+    error_point_samples: int = 30000  # The number of samples to sample the error field.
     fast_start_strokes: int = 30  # only use error field sample after these number of strokes.
 
     # error_cell_samples: int = 1000  # The number of samples to compute each error cell.
@@ -507,16 +524,16 @@ class StrokeField(nn.Module):
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-        self.sdf, self.d_shape, self.shape_param_ranges, \
-            self.shape_param_sampler = strokes.stroke_sdf(self.shape_type)
-        self.color, self.d_color, self.color_param_ranges, \
-            self.color_param_sampler = strokes.stroke_color(self.color_type)
+        # self.sdf, self.d_shape, self.shape_param_ranges, \
+        #     self.shape_param_sampler = strokes.stroke_sdf(self.shape_type)
+        # self.color, self.d_color, self.color_param_ranges, \
+        #     self.color_param_sampler = strokes.stroke_color(self.color_type)
         self.stroke_fn, self.d_shape, self.d_color, self.shape_param_ranges, \
             self.color_param_ranges, self.shape_param_sampler, self.color_param_sampler = \
             get_stroke(self.shape_type, self.color_type)
         self.shape_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_shape))
         self.color_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_color))
-        self.alpha_params = nn.Parameter(torch.ones(self.max_num_strokes))
+        self.raw_density_params = nn.Parameter(torch.zeros(self.max_num_strokes))
         self.step = 0
         self.fixed_step = 0
 
@@ -528,7 +545,6 @@ class StrokeField(nn.Module):
         for i, (p_min, p_max) in enumerate(self.color_param_ranges):
             if p_min is not None or p_max is not None:
                 self.color_params.data[:, i].clamp_(p_min, p_max)
-        self.alpha_params.data.clamp_(0, 1)
 
     @torch.no_grad()
     def step_update(self, cur_step, max_step, error_field):
@@ -548,7 +564,7 @@ class StrokeField(nn.Module):
                                            device=self.shape_params.device)
                 sample_coords = sample_coords * 2 - 1  # [0, 1] to range [-1, 1]
                 raw_coords = _unwarp_coords(self.warp_fn, sample_coords, self.bbox_size)
-                errors = error_field.sample_density(raw_coords)
+                errors = error_field.sample_error(raw_coords)
                 errors_top, index_top = torch.topk(errors, k=step - self.step, dim=-1)
                 coords_top = sample_coords[index_top].cpu()
 
@@ -572,7 +588,8 @@ class StrokeField(nn.Module):
         # Truncate the parameters to the current step.
         shape_params = self.shape_params[self.fixed_step:self.step]
         color_params = self.color_params[self.fixed_step:self.step]
-        density_params = self.alpha_params[self.fixed_step:self.step] * self.max_density
+        density_params = torch.sigmoid(
+            self.raw_density_params[self.fixed_step:self.step]) * self.max_density
 
         # Compute alpha and color for each stroke.
         sdf_delta = self.sdf_delta if self.training else self.sdf_delta_eval
@@ -584,7 +601,8 @@ class StrokeField(nn.Module):
             with torch.no_grad():
                 shape_params_fixed = self.shape_params[:self.fixed_step].detach()
                 color_params_fixed = self.color_params[:self.fixed_step].detach()
-                density_params_fixed = self.alpha_params[:self.fixed_step].detach() * self.max_density
+                density_params_fixed = torch.sigmoid(
+                    self.raw_density_params[:self.fixed_step].detach()) * self.max_density
                 alphas_fixed, colors_fixed = self.stroke_fn(coords, shape_params_fixed,
                                                             color_params_fixed, sdf_delta,
                                                             self.use_sigmoid_clamping)

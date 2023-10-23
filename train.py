@@ -169,7 +169,7 @@ def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tenso
     losses = {}
 
     # supervised by data
-    data_loss, stats = loss_fn.compute_data_loss(batch, renderings, cfg)
+    data_loss, stats = loss_fn.compute_data_loss(batch, renderings, ray_history, cfg)
     losses['data'] = data_loss
 
     # interlevel loss in MipNeRF360
