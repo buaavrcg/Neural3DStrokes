@@ -42,11 +42,12 @@ _sdf_dict = {
 
 _color_dict = {
     'constant_rgb': (0, [(0, 1)] * 3, lambda: torch.rand(3)),
-    'gradient_rgb': (1, [(None, None)] * 6 + [(0, 1)] * 6,
-                     lambda: torch.cat([torch.rand(6) * 2 - 1, torch.rand(6)], dim=-1)),
+    'gradient_rgb': (1, [(-1, 1)] * 6 + [(0, 1)] * 6,
+                     lambda: torch.cat([torch.rand(6) - 0.5, torch.rand(6)], dim=-1)),
+    'fixed_brush_rgb': (2, [(0, 1)] * 3, lambda: torch.rand(3)),
 }
 
-_color_dim = [3, 3]
+_color_dim = [3, 3, 3]
 
 
 def _make_sdf_id(base_sdf_name: str, enable_translation: bool, enable_rotation: bool,
@@ -188,7 +189,7 @@ def get_stroke(shape_type: str, color_type: str):
     if enable_rotation:
         shape_param_ranges += [(-torch.pi, torch.pi)] * 3
     if enable_translation:
-        shape_param_ranges += [(None, None)] * 3
+        shape_param_ranges += [(-1.0, 1.0)] * 3
 
     def shape_sampler(train_frac, error_coord=None):
         trans_min = torch.tensor([-0.4, -0.4, -0.4])

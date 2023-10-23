@@ -2,8 +2,9 @@
 #include <utility>
 #include <array>
 #include <math.h>
-#include "helper_math.h"
 #include "common.h"
+#include "helper_math.h"
+#include "noise.h"
 
 enum BaseSDFType
 {
@@ -23,6 +24,7 @@ enum ColorType
 {
     CONSTANT_RGB = 0,
     GRADIENT_RGB = 1,
+    FIXED_BRUSH_RGB = 2,
     NB_COLORS,
 };
 
@@ -250,36 +252,36 @@ struct BaseSDF<UNIT_ROUND_CUBE>
     __device__ static float sdf(float3 pos, const float *params)
     {
         float3 p_abs = fabs(pos);
-        float3 p_dis= p_abs - make_float3(1.0f, 1.0f, 1.0f);
-        float3 p_dis_positive=fmaxf(p_dis, make_float3(0.0f, 0.0f, 0.0f));
-        float3 p_dis_square=p_dis_positive*p_dis_positive;
-        float p_dis_norm = sqrt(p_dis_square.x+p_dis_square.y+p_dis_square.z+1e-8f);
+        float3 p_dis = p_abs - make_float3(1.0f, 1.0f, 1.0f);
+        float3 p_dis_positive = fmaxf(p_dis, make_float3(0.0f, 0.0f, 0.0f));
+        float3 p_dis_square = p_dis_positive * p_dis_positive;
+        float p_dis_norm = sqrt(p_dis_square.x + p_dis_square.y + p_dis_square.z + 1e-8f);
         float p_dis_min = min(max(p_dis.x, max(p_dis.y, p_dis.z)), 0.0f);
-        return p_dis_norm + p_dis_min-params[0];
+        return p_dis_norm + p_dis_min - params[0];
     }
 
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
     {
-        atomicAdd(grad_params + 0, -grad_SDF*1.0f);
+        atomicAdd(grad_params + 0, -grad_SDF * 1.0f);
 
         float3 p_abs = fabs(pos);
-        float3 p_dis = p_abs - make_float3(1.0f, 1.0f, 1.0f); 
-        float3 p_dis_positive=fmaxf(p_dis, make_float3(0.0f, 0.0f, 0.0f));
-        float3 p_dis_square=p_dis_positive*p_dis_positive;
-        float p_dis_norm = sqrt(p_dis_square.x+p_dis_square.y+p_dis_square.z+1e-8f);
-        float p_dis_norm_reciprocal = rsqrt(p_dis_square.x+p_dis_square.y+p_dis_square.z+1e-8) ;
-        float3 grad_p_dis_positive = p_dis_norm > 0.0f ? p_dis_positive *p_dis_norm_reciprocal : make_float3(0.0f, 0.0f, 0.0f);
+        float3 p_dis = p_abs - make_float3(1.0f, 1.0f, 1.0f);
+        float3 p_dis_positive = fmaxf(p_dis, make_float3(0.0f, 0.0f, 0.0f));
+        float3 p_dis_square = p_dis_positive * p_dis_positive;
+        float p_dis_norm = sqrt(p_dis_square.x + p_dis_square.y + p_dis_square.z + 1e-8f);
+        float p_dis_norm_reciprocal = rsqrt(p_dis_square.x + p_dis_square.y + p_dis_square.z + 1e-8);
+        float3 grad_p_dis_positive = p_dis_norm > 0.0f ? p_dis_positive * p_dis_norm_reciprocal : make_float3(0.0f, 0.0f, 0.0f);
         float grad_p_x_sym = (pos.x < 0.0f ? -1.0f : 1.0f);
         float grad_p_y_sym = (pos.y < 0.0f ? -1.0f : 1.0f);
         float grad_p_z_sym = (pos.z < 0.0f ? -1.0f : 1.0f);
         float3 grad_p_dis_sym = make_float3(grad_p_x_sym, grad_p_y_sym, grad_p_z_sym);
-        float3 grad_p_dis = grad_p_dis_positive*grad_p_dis_sym;
+        float3 grad_p_dis = grad_p_dis_positive * grad_p_dis_sym;
 
         float p_dis_min = min(max(p_dis.x, max(p_dis.y, p_dis.z)), 0.0f);
         float grad_p_dis_min = p_dis_min < 0.0f ? 1.0f : 0.0f;
-        float grad_p_dis_min_x = grad_p_dis_min * (p_dis.x>=p_dis.y&&p_dis.x>=p_dis.z ? 1.0f : 0.0f)*grad_p_dis_sym.x;
-        float grad_p_dis_min_y = grad_p_dis_min * (p_dis.x<p_dis.y&&p_dis.y>=p_dis.z ? 1.0f : 0.0f)*grad_p_dis_sym.y;
-        float grad_p_dis_min_z = grad_p_dis_min * (p_dis.x<p_dis.z&&p_dis.y<p_dis.z ? 1.0f : 0.0f)*grad_p_dis_sym.z;
+        float grad_p_dis_min_x = grad_p_dis_min * (p_dis.x >= p_dis.y && p_dis.x >= p_dis.z ? 1.0f : 0.0f) * grad_p_dis_sym.x;
+        float grad_p_dis_min_y = grad_p_dis_min * (p_dis.x < p_dis.y && p_dis.y >= p_dis.z ? 1.0f : 0.0f) * grad_p_dis_sym.y;
+        float grad_p_dis_min_z = grad_p_dis_min * (p_dis.x < p_dis.z && p_dis.y < p_dis.z ? 1.0f : 0.0f) * grad_p_dis_sym.z;
 
         float grad_x = grad_p_dis.x + grad_p_dis_min_x;
         float grad_y = grad_p_dis.y + grad_p_dis_min_y;
@@ -295,10 +297,10 @@ struct BaseSDF<UNIT_CAPPED_TORUS>
     __device__ static float sdf(float3 pos, const float *params)
     {
         float3 p_abs = make_float3(fabs(pos.x), pos.y, pos.z);
-        float2 p_xy= make_float2(p_abs.x, p_abs.y);
-        float2 sc= make_float2(sinf(params[0]), cosf(params[0]));
-        float k = cross(make_float3(p_xy, 0.0f), make_float3(sc, 0.0f)).z>0?dot(p_xy, sc):sqrt(p_xy.x*p_xy.x+p_xy.y*p_xy.y+1e-8f);
-        return sqrtf(dot(p_abs, p_abs) + 1.f - 2.f * k+1e-8f) - params[1];
+        float2 p_xy = make_float2(p_abs.x, p_abs.y);
+        float2 sc = make_float2(sinf(params[0]), cosf(params[0]));
+        float k = cross(make_float3(p_xy, 0.0f), make_float3(sc, 0.0f)).z > 0 ? dot(p_xy, sc) : sqrt(p_xy.x * p_xy.x + p_xy.y * p_xy.y + 1e-8f);
+        return sqrtf(dot(p_abs, p_abs) + 1.f - 2.f * k + 1e-8f) - params[1];
     }
 
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
@@ -306,40 +308,39 @@ struct BaseSDF<UNIT_CAPPED_TORUS>
         float3 p_abs = make_float3(fabs(pos.x), pos.y, pos.z);
         float2 p_xy = make_float2(p_abs.x, p_abs.y);
         float2 sc = make_float2(sinf(params[0]), cosf(params[0]));
-        float2 sc_f= make_float2(cosf(params[0]), sinf(params[0]));
+        float2 sc_f = make_float2(cosf(params[0]), sinf(params[0]));
         float k = cross(make_float3(p_xy, 0.0f), make_float3(sc, 0.0f)).z > 0 ? dot(p_xy, sc) : length(p_xy);
-        float inv_norm = rsqrt(dot(p_abs, p_abs) + 1.f - 2.f * k+1e-8f);
+        float inv_norm = rsqrt(dot(p_abs, p_abs) + 1.f - 2.f * k + 1e-8f);
 
         float3 grad_p_dot = pos;
-        float grad_x=0.0f;
-        float grad_y=0.0f;
-        float grad_z=0.0f;
+        float grad_x = 0.0f;
+        float grad_y = 0.0f;
+        float grad_z = 0.0f;
 
-        if(k>0.f){
-            float grad_p_k_x = -(pos.x < 0.0f ? -1.0f : 1.0f)*sc.x;
+        if (k > 0.f)
+        {
+            float grad_p_k_x = -(pos.x < 0.0f ? -1.0f : 1.0f) * sc.x;
             float grad_p_k_y = -sc.y;
             float grad_p_k_z = 0.0f;
             float3 grad_p_k = make_float3(grad_p_k_x, grad_p_k_y, grad_p_k_z);
-            atomicAdd(grad_params + 0, -grad_SDF*dot(p_xy, sc_f));
-            grad_x=(grad_p_dot.x+grad_p_k.x)*inv_norm;
-            grad_y=(grad_p_dot.y+grad_p_k.y)*inv_norm;
-            grad_z=(grad_p_dot.z+grad_p_k.z)*inv_norm;
-
+            atomicAdd(grad_params + 0, -grad_SDF * dot(p_xy, sc_f));
+            grad_x = (grad_p_dot.x + grad_p_k.x) * inv_norm;
+            grad_y = (grad_p_dot.y + grad_p_k.y) * inv_norm;
+            grad_z = (grad_p_dot.z + grad_p_k.z) * inv_norm;
         }
-        else {
+        else
+        {
             float grad_p_k_x = pos.x;
             float grad_p_k_y = pos.y;
             float grad_p_k_z = 0.0f;
             float3 grad_p_k = make_float3(grad_p_k_x, grad_p_k_y, grad_p_k_z);
-            grad_x=(grad_p_dot.x+grad_p_k.x)*inv_norm;
-            grad_y=(grad_p_dot.y+grad_p_k.y)*inv_norm;
-            grad_z=(grad_p_dot.z+grad_p_k.z)*inv_norm;
+            grad_x = (grad_p_dot.x + grad_p_k.x) * inv_norm;
+            grad_y = (grad_p_dot.y + grad_p_k.y) * inv_norm;
+            grad_z = (grad_p_dot.z + grad_p_k.z) * inv_norm;
         }
 
         atomicAdd(grad_params + 1, -grad_SDF);
         return make_float3(grad_x, grad_y, grad_z);
-
-
     }
 };
 
@@ -348,24 +349,24 @@ struct BaseSDF<UNIT_CAPSULE>
 {
     __device__ static float sdf(float3 pos, const float *params)
     {
-        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
-        float3 p_xyz= make_float3(pos.x, p_y, pos.z);
+        float p_y = pos.y - fminf(fmaxf(pos.y, 0.0f), params[0]);
+        float3 p_xyz = make_float3(pos.x, p_y, pos.z);
         float3 p_sq = p_xyz * p_xyz;
-        return sqrt(p_sq.x+p_sq.y+p_sq.z+1e-8)-1.f;
+        return sqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8) - 1.f;
     }
-    
+
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
     {
-        float p_y= pos.y-fminf(fmaxf(pos.y, 0.0f), params[0]);
-        float3 p_xyz= make_float3(pos.x, p_y, pos.z);
+        float p_y = pos.y - fminf(fmaxf(pos.y, 0.0f), params[0]);
+        float3 p_xyz = make_float3(pos.x, p_y, pos.z);
         float3 p_sq = p_xyz * p_xyz;
-        float3 grad_p_xyz= p_xyz*rsqrt(p_sq.x+p_sq.y+p_sq.z+1e-8);
-        if(pos.y>params[0]){
-            atomicAdd(grad_params+0, -grad_SDF*p_y*rsqrt(p_sq.x+p_sq.y+p_sq.z+1e-8));
+        float3 grad_p_xyz = p_xyz * rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8);
+        if (pos.y > params[0])
+        {
+            atomicAdd(grad_params + 0, -grad_SDF * p_y * rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8));
         }
         return make_float3(grad_p_xyz.x, grad_p_xyz.y, grad_p_xyz.z);
     }
-
 };
 
 template <> 
@@ -688,22 +689,24 @@ template <ColorType color_type>
 struct ColorField
 {
     static constexpr int color_dim = 3;
+    static constexpr bool use_unit_pos = false;
     // Stores color value into color_out for the given pos and shape params.
-    __device__ static void get_color(float *color_out, float3 pos, const float *params);
+    __device__ static void get_color(float *color_out, float3 pos, const float *params, const uint32_t idx_stroke);
     // Stores grad_params for given pos and color params.
     // Note: use atomic operation on grad_params
-    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, const float *params);
+    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, const float *params, const uint32_t idx_stroke);
 };
 
 template <>
 struct ColorField<CONSTANT_RGB>
 {
     static constexpr int color_dim = 3;
-    __device__ static void get_color(float *color_out, float3 pos, const float *params)
+    static constexpr bool use_unit_pos = false;
+    __device__ static void get_color(float *color_out, float3 pos, const float *params, const uint32_t idx_stroke)
     {
         *(float3 *)color_out = *(float3 *)params;
     }
-    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, const float *params)
+    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, const float *params, const uint32_t idx_stroke)
     {
         atomicAdd3(grad_params, *(float3 *)grad_color);
     }
@@ -713,7 +716,8 @@ template <>
 struct ColorField<GRADIENT_RGB>
 {
     static constexpr int color_dim = 3;
-    __device__ static void get_color(float *color_out, float3 pos, const float *params)
+    static constexpr bool use_unit_pos = true;
+    __device__ static void get_color(float *color_out, float3 pos, const float *params, const uint32_t idx_stroke)
     {
         float3 pos0 = ((float3 *)params)[0];
         float3 pos1 = ((float3 *)params)[1];
@@ -728,7 +732,7 @@ struct ColorField<GRADIENT_RGB>
         float3 c = c0 * (1.0f - t) + c1 * t;
         *(float3 *)color_out = c;
     }
-    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, const float *params)
+    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, const float *params, const uint32_t idx_stroke)
     {
         float3 pos0 = ((float3 *)params)[0];
         float3 pos1 = ((float3 *)params)[1];
@@ -755,6 +759,35 @@ struct ColorField<GRADIENT_RGB>
         atomicAdd3(grad_params + 3, dL_pos1);
         atomicAdd3(grad_params + 6, dL_dColor * make_float3(1.0f - t));
         atomicAdd3(grad_params + 9, dL_dColor * make_float3(t));
+    }
+};
+
+template <>
+struct ColorField<FIXED_BRUSH_RGB>
+{
+    static constexpr int color_dim = 3;
+    static constexpr bool use_unit_pos = true;
+    __device__ static float tint(float3 pos, const uint32_t idx_stroke)
+    {
+        float3 dir = hash31((float)idx_stroke);
+        // dir = dir * dir * dir; // pow(dir, 3.0f)
+        // float3 dir_exp = make_float3(expf(dir.x), expf(dir.y), expf(dir.z));
+        // float3 dir_softmax = dir_exp / (dir_exp.x + dir_exp.y + dir_exp.z);
+        float p = dot(pos, dir) * 12.0f;
+        float t = 1.0f + 0.4f * fbm11<4>(p);
+        // pos *= 16.0f * dir_softmax;
+        // float t = 1.0f + 0.3f * fbm13<4>(pos);
+        return clamp(t, 0.f, 1.f);
+    }
+    __device__ static void get_color(float *color_out, float3 pos, const float *params, const uint32_t idx_stroke)
+    {
+        float3 color = *(float3 *)params;
+        *(float3 *)color_out = color * tint(pos, idx_stroke);
+    }
+    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, const float *params, const uint32_t idx_stroke)
+    {
+        float3 dL_dColor = *(float3 *)grad_color;
+        atomicAdd3(grad_params + 0, dL_dColor * tint(pos, idx_stroke));
     }
 };
 
@@ -795,8 +828,14 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
     shape_params += idx_stroke * n_shape_params;
     color_params += idx_stroke * n_color_params;
 
-    // Apply inverse shape transformation if required
     float3 pos = *(const float3 *)x;
+    if constexpr (!ColorField<color_type>::use_unit_pos)
+    {
+        // Compute the color output with raw pos and color parameters
+        ColorField<color_type>::get_color(color_output, pos, color_params, idx_stroke);
+    }
+
+    // Apply inverse shape transformation if required
     const float *sp_reverse = shape_params + n_shape_params;
     pos = inverse_transform<enable_translation,
                             enable_rotation,
@@ -809,15 +848,18 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
         *sdf_output = sdf_value;
 
     // Soft clamping the SDF to compute the blending weight alpha
-    const float sdf_scale = (use_sigmoid_clamping ? 4.0f : 0.5f) / sdf_delta;
+    const float sdf_scale = (use_sigmoid_clamping ? 2.0f : 0.5f) / sdf_delta;
     float alpha = sdf_delta > 0.0f ? (use_sigmoid_clamping
                                           ? sigmoid(-sdf_value * sdf_scale)
                                           : clamp(-sdf_value * sdf_scale + 0.5f, 0.0f, 0.9999f))
                                    : float(sdf_value <= 0.0f);
     *alpha_output = alpha;
 
-    // Compute the color output with color parameters
-    ColorField<color_type>::get_color(color_output, pos, color_params);
+    if constexpr (ColorField<color_type>::use_unit_pos)
+    {
+        // Compute the color output with unit pos and color parameters
+        ColorField<color_type>::get_color(color_output, pos, color_params, idx_stroke);
+    }
 }
 
 template <uint32_t id>
@@ -957,8 +999,14 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
     shape_params += idx_stroke * n_shape_params;
     color_params += idx_stroke * n_color_params;
 
-    // Apply inverse shape transformation if required
     float3 pos = *(const float3 *)x;
+    if constexpr (!ColorField<color_type>::use_unit_pos)
+    {
+        // Compute dL/dColorParams from dL/dColor with raw pos
+        ColorField<color_type>::grad_color(grad_color_params, grad_color, pos, color_params, idx_stroke);
+    }
+
+    // Apply inverse shape transformation if required
     const float *sp_reverse = shape_params + n_shape_params;
     pos = inverse_transform<enable_translation,
                             enable_rotation,
@@ -966,7 +1014,7 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
                             enable_multiscale>(pos, sp_reverse);
 
     // Compute dL/dSDF from dL/dAlpha
-    const float sdf_scale = (use_sigmoid_clamping ? 4.0f : 0.5f) / sdf_delta;
+    const float sdf_scale = (use_sigmoid_clamping ? 2.0f : 0.5f) / sdf_delta;
     float dAlpha_dSDF = 0.0f;
     if (sdf_delta > 0.0f)
     {
@@ -978,8 +1026,11 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
     }
     float dL_dSDF = *grad_alpha * dAlpha_dSDF + (grad_sdf ? *grad_sdf : 0.0f);
 
-    // Compute dL/dColorParams from dL/dColor
-    ColorField<color_type>::grad_color(grad_color_params, grad_color, pos, color_params);
+    if constexpr (ColorField<color_type>::use_unit_pos)
+    {
+        // Compute dL/dColorParams from dL/dColor with raw pos
+        ColorField<color_type>::grad_color(grad_color_params, grad_color, pos, color_params, idx_stroke);
+    }
 
     // Compute dL/dShapeParams and dL/dPos from dL/dSDF
     float3 dSDF_dPos = BaseSDF<sdf_type>::grad_sdf(grad_shape_params, dL_dSDF, pos, shape_params);
