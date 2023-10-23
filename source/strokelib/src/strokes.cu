@@ -619,7 +619,17 @@ struct BaseSDF<UNIT_BEZIER>{
     //                 float3 grad_ansy_xyz=make_float3(0.0f,0.0f,0.0f);
     //             }
     //             else {
-                    
+    //                 float3 m=d+(c+b*t.x)*t.x;
+    //                 float3 grad_ansx_m=2.0f*m;
+    //                 float grad_m_d=1.0f;
+    //                 float3 grad_m_t=c+2.0f*b*t.x;
+    //                 float grad_d_xyz=-1.0f;
+    //                 float grad_tx_n=1.0f*z;
+    //                 float grad_tx_m=1.0f*z;
+    //                 float grad_n_v=cosf(v)*1.732050808f;
+    //                 float grad_m_v=-sinf(v);
+    //                 float grad_v_q=1.0f/(p*z*2.0f+1e-8f)*(-1.0f)*rsqrtf(1.0f-q*q/(p*p*z*z*4.0f)+1e-8f)/3.0f;
+    //                 float grad_q_xyz=kk*a*(-1.0f);
     //             }
     //         }
 
