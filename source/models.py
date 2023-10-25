@@ -509,7 +509,8 @@ class StrokeField(nn.Module):
     max_density: float = 30.  # The maximum density of the strokes.
     sdf_delta: float = 0.2  # How much to dilate the sdf boundary.
     sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
-    use_sigmoid_clamping: bool = False  # If True, use sigmoid for soft clamping.
+    sdf_delta_decay: float = 0.999  # Decay rate of sdf_delta for each step.
+    use_laplace_transform: bool = False  # If True, use sigmoid for soft clamping.
     disable_density_normals: bool = True  # If True don't compute normals.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
@@ -592,9 +593,12 @@ class StrokeField(nn.Module):
             self.raw_density_params[self.fixed_step:self.step]) * self.max_density
 
         # Compute alpha and color for each stroke.
-        sdf_delta = self.sdf_delta if self.training else self.sdf_delta_eval
+        if self.training:
+            sdf_delta = max(self.sdf_delta * (self.sdf_delta_decay ** self.step), self.sdf_delta_eval)
+        else:
+            sdf_delta = self.sdf_delta_eval
         alphas, colors = self.stroke_fn(coords, shape_params, color_params, sdf_delta,
-                                        self.use_sigmoid_clamping)
+                                        self.use_laplace_transform)
 
         # Compute the fixed step strokes.
         if self.fixed_step > 0:
@@ -605,7 +609,7 @@ class StrokeField(nn.Module):
                     self.raw_density_params[:self.fixed_step].detach()) * self.max_density
                 alphas_fixed, colors_fixed = self.stroke_fn(coords, shape_params_fixed,
                                                             color_params_fixed, sdf_delta,
-                                                            self.use_sigmoid_clamping)
+                                                            self.use_laplace_transform)
             alphas = torch.cat([alphas_fixed, alphas], dim=-1)
             colors = torch.cat([colors_fixed, colors], dim=-2)
             density_params = torch.cat([density_params_fixed, density_params], dim=-1)

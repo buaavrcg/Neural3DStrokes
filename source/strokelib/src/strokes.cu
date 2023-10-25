@@ -809,7 +809,7 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
                                       const int64_t n_shape_params,
                                       const int64_t n_color_params,
                                       const float sdf_delta,
-                                      const bool use_sigmoid_clamping)
+                                      const bool use_laplace_transform)
 {
     const uint32_t idx_thread = threadIdx.x + blockIdx.x * blockDim.x;
     const uint32_t idx_point = idx_thread / n_strokes;
@@ -844,10 +844,10 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
     if (sdf_output)
         *sdf_output = sdf_value;
 
-    // Soft clamping the SDF to compute the blending weight alpha
-    const float sdf_scale = (use_sigmoid_clamping ? 2.0f : 0.5f) / sdf_delta;
-    float alpha = sdf_delta > 0.0f ? (use_sigmoid_clamping
-                                          ? sigmoid(-sdf_value * sdf_scale)
+    // Transform the SDF to compute the blending weight alpha
+    const float sdf_scale = (use_laplace_transform ? 2.0f : 0.5f) / sdf_delta;
+    float alpha = sdf_delta > 0.0f ? (use_laplace_transform
+                                          ? laplace_cdf(-sdf_value * sdf_scale)
                                           : clamp(-sdf_value * sdf_scale + 0.5f, 0.0f, 0.9999f))
                                    : float(sdf_value <= 0.0f);
     *alpha_output = alpha;
@@ -871,7 +871,7 @@ void stroke_forward_warpper(float *alpha_output,
                             const int64_t n_shape_params,
                             const int64_t n_color_params,
                             const float sdf_delta,
-                            const bool use_sigmoid_clamping)
+                            const bool use_laplace_transform)
 {
     constexpr uint32_t sdf_id = id / NB_COLORS;
     constexpr uint32_t color_id = id % NB_COLORS;
@@ -904,7 +904,7 @@ void stroke_forward_warpper(float *alpha_output,
             n_shape_params,
             n_color_params,
             sdf_delta,
-            use_sigmoid_clamping);
+            use_laplace_transform);
 }
 
 DECLARE_INT_TEMPLATE_ARG_LUT(stroke_forward_warpper)
@@ -917,7 +917,7 @@ void stroke_forward(at::Tensor alpha_output,
                     const uint32_t sdf_id,
                     const uint32_t color_id,
                     const float sdf_delta,
-                    const bool use_sigmoid_clamping)
+                    const bool use_laplace_transform)
 {
     CHECK_FLOAT_INPUT(alpha_output);
     CHECK_FLOAT_INPUT(color_output);
@@ -948,7 +948,7 @@ void stroke_forward(at::Tensor alpha_output,
         n_shape_params,
         n_color_params,
         sdf_delta,
-        use_sigmoid_clamping);
+        use_laplace_transform);
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -976,7 +976,7 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
                                        const int64_t n_shape_params,
                                        const int64_t n_color_params,
                                        const float sdf_delta,
-                                       const bool use_sigmoid_clamping)
+                                       const bool use_laplace_transform)
 {
     const uint32_t idx_thread = threadIdx.x + blockIdx.x * blockDim.x;
     const uint32_t idx_point = idx_thread / n_strokes;
@@ -1011,13 +1011,13 @@ __global__ void stroke_backward_kernel(float *__restrict__ grad_shape_params,
                             enable_multiscale>(pos, sp_reverse);
 
     // Compute dL/dSDF from dL/dAlpha
-    const float sdf_scale = (use_sigmoid_clamping ? 2.0f : 0.5f) / sdf_delta;
+    const float sdf_scale = (use_laplace_transform ? 2.0f : 0.5f) / sdf_delta;
     float dAlpha_dSDF = 0.0f;
     if (sdf_delta > 0.0f)
     {
         float alpha_val = *(alpha + idx_thread);
-        if (use_sigmoid_clamping)
-            dAlpha_dSDF = alpha_val * (1.0f - alpha_val) * -sdf_scale;
+        if (use_laplace_transform)
+            dAlpha_dSDF = (alpha_val < 0.5f ? alpha_val : 1.0f - alpha_val) * -sdf_scale;
         else
             dAlpha_dSDF = 0.0f < alpha_val && alpha_val < 0.9999f ? -sdf_scale : 0.0f;
     }
@@ -1095,7 +1095,7 @@ void stroke_backward_warpper(float *grad_shape_params,
                              const int64_t n_shape_params,
                              const int64_t n_color_params,
                              const float sdf_delta,
-                             const bool use_sigmoid_clamping)
+                             const bool use_laplace_transform)
 {
     constexpr uint32_t sdf_id = id / NB_COLORS;
     constexpr uint32_t color_id = id % NB_COLORS;
@@ -1132,7 +1132,7 @@ void stroke_backward_warpper(float *grad_shape_params,
             n_shape_params,
             n_color_params,
             sdf_delta,
-            use_sigmoid_clamping);
+            use_laplace_transform);
 }
 
 DECLARE_INT_TEMPLATE_ARG_LUT(stroke_backward_warpper)
@@ -1149,7 +1149,7 @@ void stroke_backward(at::Tensor grad_shape_params,
                      const uint32_t sdf_id,
                      const uint32_t color_id,
                      const float sdf_delta,
-                     const bool use_sigmoid_clamping)
+                     const bool use_laplace_transform)
 {
     CHECK_FLOAT_INPUT(grad_shape_params);
     CHECK_FLOAT_INPUT(grad_color_params);
@@ -1187,5 +1187,5 @@ void stroke_backward(at::Tensor grad_shape_params,
         n_shape_params,
         n_color_params,
         sdf_delta,
-        use_sigmoid_clamping);
+        use_laplace_transform);
 }

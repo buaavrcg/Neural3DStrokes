@@ -21,6 +21,6 @@ Model.num_nerf_samples = 32
 
 StrokeField.warp_fn = 'contract'
 StrokeField.shape_type = 'line'
-StrokeField.use_sigmoid_clamping = False
+StrokeField.use_laplace_transform = False
 
 MLP.warp_fn = 'contract'

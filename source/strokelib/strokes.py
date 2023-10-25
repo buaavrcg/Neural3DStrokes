@@ -81,7 +81,7 @@ class _stroke_fn(Function):
                 sdf_id: int,
                 color_id: int,
                 sdf_delta: float,
-                use_sigmoid_clamping: bool = False,
+                use_laplace_transform: bool = False,
                 no_sdf: bool = True):
         """Compute the SDF value and the base coordinates of a batch of strokes.
 
@@ -93,7 +93,7 @@ class _stroke_fn(Function):
             sdf_id (int): Composite id of the signed distance function to use.
             color_id (int): Id of the color function to use.
             sdf_delta (float): Delta value for the clamping signed distance function.
-            use_sigmoid_clamping (bool): Use sigmoid clamping or linear clamping?
+            use_laplace_transform (bool): Use sigmoid clamping or linear clamping?
             no_sdf (bool): Return None for raw sdf values?
             
         Returns:
@@ -117,13 +117,13 @@ class _stroke_fn(Function):
         color_output = torch.empty(color_shape, dtype=x.dtype, device=x.device)
         sdf_output = torch.empty(0 if no_sdf else sdf_shape, dtype=x.dtype, device=x.device)
         _backend.stroke_forward(alpha_output, color_output, sdf_output, x, shape_params,
-                                color_params, sdf_id, color_id, sdf_delta, use_sigmoid_clamping)
+                                color_params, sdf_id, color_id, sdf_delta, use_laplace_transform)
         if ctx.needs_input_grad[0] or ctx.needs_input_grad[1] or ctx.needs_input_grad[2]:
             ctx.save_for_backward(x, alpha_output, shape_params, color_params)
             ctx.sdf_id = sdf_id
             ctx.color_id = color_id
             ctx.sdf_delta = sdf_delta
-            ctx.use_sigmoid_clamping = use_sigmoid_clamping
+            ctx.use_laplace_transform = use_laplace_transform
             ctx.pre_shape = pre_shape
 
         alpha_output = alpha_output.reshape(*pre_shape, num_strokes)
@@ -146,7 +146,7 @@ class _stroke_fn(Function):
         sdf_id = ctx.sdf_id
         color_id = ctx.color_id
         sdf_delta = ctx.sdf_delta
-        use_sigmoid_clamping = ctx.use_sigmoid_clamping
+        use_laplace_transform = ctx.use_laplace_transform
         pre_shape = ctx.pre_shape
 
         grad_alpha = grad_alpha.reshape(-1, num_strokes)
@@ -163,7 +163,7 @@ class _stroke_fn(Function):
                              device=x.device)
         _backend.stroke_backward(grad_shape_params, grad_color_params, grad_x, grad_alpha,
                                  grad_color, grad_sdf, x, alpha_output, shape_params, color_params,
-                                 sdf_id, color_id, sdf_delta, use_sigmoid_clamping)
+                                 sdf_id, color_id, sdf_delta, use_laplace_transform)
         if ctx.needs_input_grad[0]:
             grad_x = grad_x.reshape(*pre_shape, 3)
         else:

@@ -41,7 +41,13 @@ __host__ __device__ inline T div_round_up(T val, T divisor)
 template <typename T>
 __host__ __device__ inline T sigmoid(const T v)
 {
-    return 1.0f / (1.0f + exp(-v));
+    return T(1) / (T(1) + exp(-v));
+}
+
+template <typename T>
+__host__ __device__ inline T laplace_cdf(const T s)
+{
+    return s <= T(0) ? T(0.5) * exp(s) : T(1) - T(0.5) * exp(-s);
 }
 
 __device__ inline void atomicAdd3(float *address, float3 val)

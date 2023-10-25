@@ -18,7 +18,7 @@ void stroke_forward(at::Tensor alpha_output,
                     const uint32_t sdf_id,
                     const uint32_t color_id,
                     const float sdf_delta,
-                    const bool use_sigmoid_clamping);
+                    const bool use_laplace_transform);
 
 // grad_shape_params: [N_Strokes, N_ShapeParams], float
 // grad_color_params: [N_Strokes, N_ColorParams], float
@@ -42,4 +42,4 @@ void stroke_backward(at::Tensor grad_shape_params,
                      const uint32_t sdf_id,
                      const uint32_t color_id,
                      const float sdf_delta,
-                     const bool use_sigmoid_clamping);
+                     const bool use_laplace_transform);
