@@ -349,7 +349,7 @@ def anti_interlevel_loss(ray_history, config: configs.Config):
     return config.anti_interlevel_loss_mult * loss_anti_interlevel
 
 
-def distortion_loss(ray_history, config):
+def distortion_loss(ray_history, config: configs.Config):
     """Computes the distortion loss regularizer defined in mip-NeRF 360."""
     last_ray_results = ray_history[-1]
     c = last_ray_results['sdist']
@@ -358,7 +358,7 @@ def distortion_loss(ray_history, config):
     return config.distortion_loss_mult * loss
 
 
-def opacity_reg_loss(renderings, config):
+def opacity_reg_loss(renderings, config: configs.Config):
     total_loss = 0.
     for rendering in renderings:
         o = rendering['acc']
@@ -366,7 +366,7 @@ def opacity_reg_loss(renderings, config):
     return total_loss
 
 
-def hash_decay_loss(ray_history, config):
+def hash_decay_loss(ray_history, config: configs.Config):
     last_ray_results = ray_history[-1]
     total_loss = torch.tensor(0., device=last_ray_results['sdist'].device)
     for ray_results in ray_history:
@@ -388,3 +388,12 @@ def error_loss(batch, renderings, config: configs.Config):
 
     loss = config.error_loss_mult * error_residual_abs.mean()
     return loss
+
+
+def density_reg_loss(model, config: configs.Config):
+    total_loss = 0.
+    density_alpha = torch.sigmoid(model.nerf.raw_density_params[:model.nerf.step])
+    # Encourage the density alpha to be close to 1.
+    loss = config.density_reg_loss_mult * (density_alpha - 1.0).square().mean()
+    return loss
+

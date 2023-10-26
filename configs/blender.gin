@@ -6,9 +6,10 @@ Config.far = 6
 Config.factor = 2
 Config.train_render_every = 500
 Config.max_steps = 30000
+Config.data_loss_mult = 1.0
 Config.mask_loss_mult = 0.01
 Config.sinkhorn_loss_mult = 0.0
-Config.data_loss_mult = 1.0
+Config.density_reg_loss_mult = 0.0
 Config.lr_init = 0.01
 Config.lr_final = 0.001
 

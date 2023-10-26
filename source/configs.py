@@ -82,6 +82,7 @@ class Config:
     distortion_loss_mult: float = 0.005  # Multiplier on the distortion loss.
     opacity_loss_mult: float = 0.  # Multiplier on the distortion loss.
     error_loss_mult: float = 0.1  # Multiplier on the error loss.
+    density_reg_loss_mult: float = 0.  # Multiplier on the density regularization loss.
 
     # Eval configs
     num_showcase_images: int = 5  # The number of test-set images to showcase.
