@@ -69,6 +69,8 @@ class Config:
     anti_interlevel_loss_mult: float = 0.01  # Mult. for the loss on the proposal MLP.
     pulse_width = [0.03, 0.003]  # Mult. for the loss on the proposal MLP.
     hash_decay_mult: float = 0.1  # Mult. for the loss on the hash feature decay.
+    train_sample_multipler_init: float = 1.  # Initial sample multiplier.
+    train_sample_final_frac: float = 0.9  # Train fraction to reach final sample multiplier.
     
     lr_init: float = 0.01  # The initial learning rate.
     lr_final: float = 0.003  # The final learning rate.
@@ -82,6 +84,7 @@ class Config:
     distortion_loss_mult: float = 0.005  # Multiplier on the distortion loss.
     opacity_loss_mult: float = 0.  # Multiplier on the distortion loss.
     error_loss_mult: float = 0.1  # Multiplier on the error loss.
+    error_loss_lower_lambda: float = 10.0  # Multiplier on the lower error loss.
     density_reg_loss_mult: float = 0.  # Multiplier on the density regularization loss.
 
     # Eval configs
@@ -94,8 +97,13 @@ class Config:
     eval_dataset_limit: int = np.iinfo(np.int32).max  # Num test images to eval.
     eval_quantize_metrics: bool = True  # If True, run metrics on 8-bit images.
     eval_crop_borders: int = 0  # Ignore c border pixels in eval (x[c:-c, c:-c]).
+    eval_sample_multipler: float = 2.  # Multiplier for the number of samples.
 
     # Render configs
+    render_progressive_strokes: bool = True  # If True, render strokes progressively.
+    render_progressive_sample_multipler: float = 12.  # Multiplier for the number of samples.
+    render_progressive_render_chunk_size_divisor: int = 16  # Divisor for render chunk size.
+    render_factor: int = -1  # The downsample factor of rendered images, -1 for not used.
     render_video_fps: int = 60  # Framerate in frames-per-second.
     render_video_crf: int = 18  # Constant rate factor for ffmpeg video quality.
     render_path_frames: int = 120  # Number of frames in render path.
@@ -130,6 +138,7 @@ def load_config(rank: int, world_size: int) -> Config:
     config.exp_path = os.path.join("exp", config.exp_name)
     config.ckpt_dir = os.path.join(config.exp_path, 'checkpoints')
     config.output_dir = os.path.join(config.exp_path, 'outputs')
+    config.render_dir = os.path.join(config.exp_path, 'render')
     config.global_rank = rank  # Distributed process rank.
     config.world_size = world_size # Number of processes for distributed training.
     

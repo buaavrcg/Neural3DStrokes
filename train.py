@@ -194,7 +194,7 @@ def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tenso
         
     # error field loss
     if cfg.error_loss_mult > 0:
-        losses['error'] = loss_fn.error_loss(batch, renderings, cfg)
+        losses['error'] = loss_fn.error_loss(batch, renderings, ray_history, cfg)
         
     # density regularization loss
     if cfg.density_reg_loss_mult > 0:

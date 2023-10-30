@@ -7,12 +7,14 @@
 // color_output: [N_Points, N_Strokes, D_Color], float
 // sdf_output: [N_Points, N_Strokes], float
 // x: [N_Points, 3], float
+// viewdir: [N_Points, 3], float
 // shape_params: [N_Strokes, N_ShapeParams], float
 // color_params: [N_Strokes, N_ColorParams], float
 void stroke_forward(at::Tensor alpha_output,
                     at::Tensor color_output,
                     at::Tensor sdf_output,
                     const at::Tensor x,
+                    const at::Tensor viewdir,
                     const at::Tensor shape_params,
                     const at::Tensor color_params,
                     const uint32_t sdf_id,
@@ -36,6 +38,7 @@ void stroke_backward(at::Tensor grad_shape_params,
                      const at::Tensor grad_color,
                      const at::Tensor grad_sdf,
                      const at::Tensor x,
+                     const at::Tensor viewdir,
                      const at::Tensor alpha,
                      const at::Tensor shape_params,
                      const at::Tensor color_params,

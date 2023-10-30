@@ -29,7 +29,8 @@ def summarize_results(folder, scene_names, num_buckets):
         test_preds_folder = os.path.join(folder, scene_name, 'test_preds')
         values = []
         for metric_name in metric_names:
-            filename = os.path.join(folder, scene_name, 'test_preds', f'{metric_name}_{num_iters}.txt')
+            filename = os.path.join(folder, scene_name, 'test_preds',
+                                    f'{metric_name}_{num_iters}.txt')
             with misc.open_file(filename) as f:
                 v = np.array([float(s) for s in f.readline().split(' ')])
                 values.append(np.mean(np.reshape(v, [-1, num_buckets]), 0))
@@ -50,20 +51,23 @@ def summarize_results(folder, scene_names, num_buckets):
 
 
 def main():
-    config = configs.load_config()
-    config.exp_path = os.path.join('exp', config.exp_name)
-    config.checkpoint_dir = os.path.join(config.exp_path, 'checkpoints')
-    config.render_dir = os.path.join(config.exp_path, 'render')
+    config = configs.load_config(rank=0, world_size=1)
 
     accelerator = accelerate.Accelerator()
+    torch.backends.cudnn.benchmark = True  # Improves training speed.
+    torch.backends.cuda.matmul.allow_tf32 = False  # Improves numerical accuracy.
+    torch.backends.cudnn.allow_tf32 = False  # Improves numerical accuracy.
+    torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False  # Improves numerical accuracy.
 
     # setup logger
     logging.basicConfig(
         format="%(asctime)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         force=True,
-        handlers=[logging.StreamHandler(sys.stdout),
-                  logging.FileHandler(os.path.join(config.exp_path, 'log_eval.txt'))],
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(os.path.join(config.exp_path, 'log_eval.txt'))
+        ],
         level=logging.INFO,
     )
     sys.excepthook = misc.handle_exception
@@ -71,35 +75,39 @@ def main():
     logger.info(config)
     logger.info(accelerator.state, main_process_only=False)
 
-    config.world_size = accelerator.num_processes
-    config.global_rank = accelerator.process_index
+    # Set random seed.
     accelerate.utils.set_seed(config.seed, device_specific=True)
+    # setup model and optimizer
     model = models.Model(config=config)
     model.eval()
-    model.to(accelerator.device)
 
-    dataset = datasets.load_dataset('test', config.data_dir, config)
-    dataloader = DataLoader(np.arange(len(dataset)),
-                                             shuffle=False,
-                                             batch_size=1,
-                                             collate_fn=dataset.collate_fn,
-                                             )
+    dataset = datasets.load_dataset('test', config)
+    dataloader = DataLoader(
+        np.arange(len(dataset)),
+        shuffle=False,
+        batch_size=1,
+        collate_fn=dataset.collate_fn,
+    )
     tb_process_fn = lambda x: x.transpose(2, 0, 1) if len(x.shape) == 3 else x[None]
 
-    model = accelerator.prepare(model)
+    # use accelerate to prepare.
+    model, dataloader = accelerator.prepare(model, dataloader)
 
+    # metric handler
     metric_harness = image_utils.MetricHarness()
 
     last_step = 0
-    out_dir = os.path.join(config.exp_path,
-                           'path_renders' if config.render_path else 'test_preds')
+    out_dir = os.path.join(config.exp_path, 'path_renders' if config.render_path else 'test_preds')
     path_fn = lambda x: os.path.join(out_dir, x)
 
     if not config.eval_only_once:
-        summary_writer = tensorboard.SummaryWriter(
-            os.path.join(config.exp_path, 'eval'))
+        summary_writer = tensorboard.SummaryWriter(os.path.join(config.exp_path, 'eval'))
+        
+    # Use more samples for evaluation.
+    model.num_prop_samples *= config.eval_sample_multipler
+    model.num_nerf_samples *= config.eval_sample_multipler
     while True:
-        step = checkpoints.restore_checkpoint(config.checkpoint_dir, accelerator, logger)
+        step = checkpoints.restore_checkpoint(config.ckpt_dir, accelerator, logger)
         if step <= last_step:
             logger.info(f'Checkpoint step {step} <= last step {last_step}, sleeping.')
             time.sleep(10)
@@ -121,8 +129,9 @@ def main():
                 logger.info(f'Skipping image {idx + 1}/{dataset.size}')
                 continue
             logger.info(f'Evaluating image {idx + 1}/{dataset.size}')
-            rendering = models.render_image(model, accelerator,
-                                            batch, False, 1, config)
+            
+            model.nerf.step = model.nerf.max_num_strokes
+            rendering = models.render_image(model, accelerator, batch, config)
 
             if not accelerator.is_main_process:  # Only record via host 0.
                 continue
@@ -130,7 +139,8 @@ def main():
             render_times.append((time.time() - eval_start_time))
             logger.info(f'Rendered in {render_times[-1]:0.3f}s')
 
-            rendering = tree_map(lambda x: x.detach().cpu().numpy() if x is not None else None, rendering)
+            rendering = tree_map(lambda x: x.detach().cpu().numpy()
+                                 if x is not None else None, rendering)
             batch = tree_map(lambda x: x.detach().cpu().numpy() if x is not None else None, batch)
 
             if not config.eval_only_once and idx in showcase_indices:
@@ -150,45 +160,31 @@ def main():
                     rgb_gt = crop_fn(rgb_gt)
 
                 metric = metric_harness(rgb, rgb_gt)
-
-                if config.compute_disp_metrics:
-                    for tag in ['mean', 'median']:
-                        key = f'distance_{tag}'
-                        if key in rendering:
-                            disparity = 1 / (1 + rendering[key])
-                            metric[f'disparity_{tag}_mse'] = float(
-                                ((disparity - batch['disps']) ** 2).mean())
-
                 for m, v in metric.items():
                     logger.info(f'{m:30s} = {v:.4f}')
-
                 metrics.append(metric)
 
             if config.eval_save_output and (config.eval_render_interval > 0):
                 if (idx % config.eval_render_interval) == 0:
-                    misc.save_img_u8(rendering['rgb'],
-                                      path_fn(f'color_{idx:03d}.png'))
+                    misc.save_img_u8(rendering['rgb'], path_fn(f'color_{idx:03d}.png'))
 
                     for key in ['distance_mean', 'distance_median']:
                         if key in rendering:
-                            misc.save_img_f32(rendering[key],
-                                               path_fn(f'{key}_{idx:03d}.tiff'))
+                            misc.save_img_f32(rendering[key], path_fn(f'{key}_{idx:03d}.tiff'))
 
                     for key in ['normals']:
                         if key in rendering:
                             misc.save_img_u8(rendering[key] / 2. + 0.5,
-                                              path_fn(f'{key}_{idx:03d}.png'))
+                                             path_fn(f'{key}_{idx:03d}.png'))
 
                     misc.save_img_f32(rendering['acc'], path_fn(f'acc_{idx:03d}.tiff'))
 
         if (not config.eval_only_once) and accelerator.is_main_process:
-            summary_writer.add_scalar('eval_median_render_time', np.median(render_times),
-                                      step)
+            summary_writer.add_scalar('eval_median_render_time', np.median(render_times), step)
             for name in metrics[0]:
                 scores = [m[name] for m in metrics]
                 summary_writer.add_scalar('eval_metrics/' + name, np.mean(scores), step)
-                summary_writer.add_histogram('eval_metrics/' + 'perimage_' + name, scores,
-                                             step)
+                summary_writer.add_histogram('eval_metrics/' + 'perimage_' + name, scores, step)
 
             for i, r, b in showcases:
                 if config.vis_decimate > 1:
@@ -208,8 +204,7 @@ def main():
                     residual = np.clip(pred - target + 0.5, 0, 1)
                     summary_writer.add_image(f'true_residual_{i}', tb_process_fn(residual), step)
 
-        if (config.eval_save_output and (not config.render_path) and
-                accelerator.is_main_process):
+        if (config.eval_save_output and (not config.render_path) and accelerator.is_main_process):
             with misc.open_file(path_fn(f'render_times_{step}.txt'), 'w') as f:
                 f.write(' '.join([str(r) for r in render_times]))
             logger.info(f'metrics:')
@@ -220,12 +215,13 @@ def main():
                     ms = [m[name] for m in metrics]
                     f.write(' '.join([str(m) for m in ms]))
                     results[name] = ' | '.join(
-                        list(map(str, np.mean(np.array(ms).reshape([-1, num_buckets]), 0).tolist())))
+                        list(map(str,
+                                 np.mean(np.array(ms).reshape([-1, num_buckets]), 0).tolist())))
             with misc.open_file(path_fn(f'metric_avg_{step}.txt'), 'w') as f:
                 for name in metrics[0]:
                     f.write(f'{name}: {results[name]}\n')
                     logger.info(f'{name}: {results[name]}')
-            
+
             if config.eval_save_ray_data:
                 for i, r, b in showcases:
                     rays = {k: v for k, v in r.items() if 'ray_' in k}

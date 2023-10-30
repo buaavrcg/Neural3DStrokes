@@ -34,9 +34,11 @@ elif os.name == "nt":
 _backend = load(name='_strokelib',
                 extra_cflags=c_flags,
                 extra_cuda_cflags=nvcc_flags,
+                extra_include_paths=[os.path.join(_src_path, 'src')],
                 verbose=True,
                 sources=[os.path.join(_src_path, 'src', f) for f in [
-                    'strokes.cu',
+                    'strokes_forward.cu',
+                    'strokes_backward.cu',
                     'compositing.cu',
                     'bindings.cpp',
                 ]])

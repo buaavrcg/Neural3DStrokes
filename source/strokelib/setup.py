@@ -38,7 +38,8 @@ setup(
         CUDAExtension(
             name='_strokelib', # extension name, import this to use CUDA API
             sources=[os.path.join(_src_path, 'src', f) for f in [
-                'strokes.cu',
+                'strokes_forward.cu',
+                'strokes_backward.cu',
                 'compositing.cu',
                 'bindings.cpp',
             ]],

@@ -1,5 +1,6 @@
 import accelerate
 import gin
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -70,8 +71,8 @@ class Model(nn.Module):
     opaque_background: bool = False  # If true, make the background opaque.
     std_scale: float = 0.5  # Scale the scale of the standard deviation.
     prop_desired_grid_size = [512, 2048]  # The desired grid size for each proposal level.
-    error_field_grid_size: int = 512  # The resolution of the error fields.
-    use_directional_error_field: bool = True  # If True, error field has error value (rgb).
+    error_field_grid_size: int = 256  # The resolution of the error fields.
+    use_directional_error_field: bool = False  # If True, error field has error value (rgb).
 
     def __init__(self, config=None, **kwargs):
         super().__init__()
@@ -93,10 +94,12 @@ class Model(nn.Module):
                 self.register_module(
                     f'prop_mlp_{i}',
                     PropMLP(grid_disired_resolution=self.prop_desired_grid_size[i]))
+        self.train_frac = 1.0
 
-    def step_update(self, *args, **kwargs):
+    def step_update(self, cur_step, max_step, *args, **kwargs):
+        self.train_frac = cur_step / max_step
         if hasattr(self.nerf, 'step_update'):
-            self.nerf.step_update(*args, **kwargs, error_field=self.error_field)
+            self.nerf.step_update(cur_step, max_step, *args, **kwargs, error_field=self.error_field)
 
     def forward(self, batch, compute_extras):
         """The mip-NeRF Model.
@@ -132,7 +135,14 @@ class Model(nn.Module):
         error = None
         for i_level in range(self.num_levels):
             is_prop = i_level < (self.num_levels - 1)
+            if is_prop and self.num_prop_samples == 0:
+                continue
             num_samples = self.num_prop_samples if is_prop else self.num_nerf_samples
+            if not is_prop and self.training:
+                num_samples_mult = train_utils.log_lerp(
+                    min(self.train_frac / self.config.train_sample_final_frac, 1.0),
+                    self.config.train_sample_multipler_init, 1.0)
+                num_samples = int(math.ceil(num_samples * num_samples_mult))
 
             # Dilate by some multiple of the expected span of each current interval,
             # with some bias added in.
@@ -237,7 +247,7 @@ class Model(nn.Module):
                 rendering['ray_rgbs'] = (rgb.reshape((-1, ) + rgb.shape[-2:]))[:n, :, :]
 
             # Compute errors for the first level sampling.
-            if i_level == 0:
+            if i_level == 0 or self.num_prop_samples == 0:
                 error_field_results = self.error_field(coords)
                 error_weights = render.compute_alpha_weights(
                     error_field_results['density'],
@@ -252,6 +262,8 @@ class Model(nn.Module):
                     error = error_weights.sum(dim=-1).unsqueeze(-1)
             if not is_prop:
                 rendering['error'] = error
+                ray_results['error_density'] = error_field_results['density']
+                ray_results['error_rgb'] = error_field_results['rgb']
 
             renderings.append(rendering)
             ray_results['sdist'] = sdist.clone()
@@ -507,7 +519,7 @@ class StrokeField(nn.Module):
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
     max_density: float = 30.  # The maximum density of the strokes.
-    sdf_delta: float = 0.2  # How much to dilate the sdf boundary.
+    sdf_delta: float = 0.3  # How much to dilate the sdf boundary.
     sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
     sdf_delta_decay: float = 0.999  # Decay rate of sdf_delta for each step.
     use_laplace_transform: bool = False  # If True, use sigmoid for soft clamping.
@@ -517,8 +529,6 @@ class StrokeField(nn.Module):
     min_update_interval: int = 2  # The minimum number of steps to add new strokes.
     error_point_samples: int = 30000  # The number of samples to sample the error field.
     fast_start_strokes: int = 30  # only use error field sample after these number of strokes.
-
-    # error_cell_samples: int = 1000  # The number of samples to compute each error cell.
 
     def __init__(self, **kwargs):
         super().__init__()
@@ -581,7 +591,7 @@ class StrokeField(nn.Module):
             self.fixed_step = max(self.fixed_step, step - self.max_opt_strokes)
         self.clip_params()
 
-    def predict_density(self, coords, no_warp=False):
+    def predict_density(self, coords, viewdirs, no_warp=False):
         """Helper function to output density and rgb."""
         # Encode input positions
         coords = _warp_coords(self.warp_fn, coords, self.bbox_size, no_warp)
@@ -594,10 +604,10 @@ class StrokeField(nn.Module):
 
         # Compute alpha and color for each stroke.
         if self.training:
-            sdf_delta = max(self.sdf_delta * (self.sdf_delta_decay ** self.step), self.sdf_delta_eval)
+            sdf_delta = max(self.sdf_delta * (self.sdf_delta_decay**self.step), self.sdf_delta_eval)
         else:
             sdf_delta = self.sdf_delta_eval
-        alphas, colors = self.stroke_fn(coords, shape_params, color_params, sdf_delta,
+        alphas, colors = self.stroke_fn(coords, viewdirs, shape_params, color_params, sdf_delta,
                                         self.use_laplace_transform)
 
         # Compute the fixed step strokes.
@@ -607,7 +617,7 @@ class StrokeField(nn.Module):
                 color_params_fixed = self.color_params[:self.fixed_step].detach()
                 density_params_fixed = torch.sigmoid(
                     self.raw_density_params[:self.fixed_step].detach()) * self.max_density
-                alphas_fixed, colors_fixed = self.stroke_fn(coords, shape_params_fixed,
+                alphas_fixed, colors_fixed = self.stroke_fn(coords, viewdirs, shape_params_fixed,
                                                             color_params_fixed, sdf_delta,
                                                             self.use_laplace_transform)
             alphas = torch.cat([alphas_fixed, alphas], dim=-1)
@@ -633,13 +643,13 @@ class StrokeField(nn.Module):
             normals: [..., 3], or None.
         """
         if self.disable_density_normals:
-            density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
+            density, x, coords_warped = self.predict_density(coords, viewdirs, no_warp=no_warp)
             grad_density = None
             normals = None
         else:
             with torch.enable_grad():
                 coords.requires_grad_(True)
-                density, x, coords_warped = self.predict_density(coords, no_warp=no_warp)
+                density, x, coords_warped = self.predict_density(coords, viewdirs, no_warp=no_warp)
                 d_output = torch.ones_like(density, requires_grad=False, device=density.device)
                 grad_density = torch.autograd.grad(outputs=density,
                                                    inputs=coords,

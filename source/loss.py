@@ -224,12 +224,12 @@ def _get_sinkhorn_loss(rendering, ray_history, batch, config):
     sample_num = 1024
     # weights_sum = weights.sum(dim=-1)
     # sample_index = torch.topk(weights_sum, sample_num)[1]
-    output = output[:sample_num] # [sample_index]
-    target = target[:sample_num] # [sample_index]
-    segment_A = segment_A[:sample_num] # [sample_index]
-    segment_B = segment_B[:sample_num] # [sample_index]
-    points = points[:sample_num] # [sample_index]
-    weights = weights[:sample_num] # [sample_index]
+    output = output[:sample_num]  # [sample_index]
+    target = target[:sample_num]  # [sample_index]
+    segment_A = segment_A[:sample_num]  # [sample_index]
+    segment_B = segment_B[:sample_num]  # [sample_index]
+    points = points[:sample_num]  # [sample_index]
+    weights = weights[:sample_num]  # [sample_index]
 
     cost_matrix = _cost_matrix(points, weights, segment_A, segment_B)
     sinkhorn_loss = _compute_sinkhorn_loss(cost_matrix,
@@ -377,16 +377,22 @@ def hash_decay_loss(ray_history, config: configs.Config):
     return total_loss
 
 
-def error_loss(batch, renderings, config: configs.Config):
+def error_loss(batch, renderings, ray_history, config: configs.Config):
     rendering = renderings[-1]
+    ray_history = ray_history[-1]
     residual = rendering['rgb'].detach() - batch['rgb'][..., :3]
     residual_sq = torch.square(residual)
-    residual_target = 2.0 * residual_sq.sum(-1, keepdim=True)
+    residual_target = residual_sq.sum(-1, keepdim=True)
 
     error_residual = rendering['error'] - torch.clamp(residual_target, 0.0, 1.0)
-    error_residual_abs = torch.abs(error_residual)
+    error_residual = torch.where(error_residual > 0.0, error_residual,
+                                 -config.error_loss_lower_lambda * error_residual)
+    
+    density = ray_history['error_density']
+    rgb = ray_history['error_rgb']
+    error_reg = 0.01 * density + 0.1 * rgb.mean(-1)
 
-    loss = config.error_loss_mult * error_residual_abs.mean()
+    loss = config.error_loss_mult * (error_residual.mean() + error_reg.mean())
     return loss
 
 
@@ -396,4 +402,3 @@ def density_reg_loss(model, config: configs.Config):
     # Encourage the density alpha to be close to 1.
     loss = config.density_reg_loss_mult * (density_alpha - 1.0).square().mean()
     return loss
-
