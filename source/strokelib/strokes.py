@@ -195,9 +195,9 @@ def get_stroke(shape_type: str, color_type: str):
                           enable_multiscale)
 
     if enable_singlescale:
-        shape_param_ranges += [(1e-2, 0.5)]
+        shape_param_ranges += [(0.01, 0.5)]
     elif enable_multiscale:
-        shape_param_ranges += [(1e-2, 0.5)] * 3
+        shape_param_ranges += [(0.01, 0.5)] * 3
     if enable_rotation:
         shape_param_ranges += [(-torch.pi, torch.pi)] * 3
     if enable_translation:

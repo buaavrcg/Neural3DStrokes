@@ -398,7 +398,7 @@ def error_loss(batch, renderings, ray_history, config: configs.Config):
 
 def density_reg_loss(model, config: configs.Config):
     total_loss = 0.
-    density_alpha = torch.sigmoid(model.nerf.raw_density_params[:model.nerf.step])
-    # Encourage the density alpha to be close to 1.
-    loss = config.density_reg_loss_mult * (density_alpha - 1.0).square().mean()
+    density_alpha = model.nerf.density_params[:model.nerf.step]
+    # Encourage the density alpha to be close to 0.
+    loss = config.density_reg_loss_mult * density_alpha.mean()
     return loss

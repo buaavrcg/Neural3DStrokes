@@ -518,7 +518,7 @@ class StrokeField(nn.Module):
     init_num_strokes: int = 10  # The number of strokes to initialize.
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
-    max_density: float = 30.  # The maximum density of the strokes.
+    density_scale: float = 20.  # The maximum density of the strokes.
     sdf_delta: float = 0.3  # How much to dilate the sdf boundary.
     sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
     sdf_delta_decay: float = 0.999  # Decay rate of sdf_delta for each step.
@@ -528,7 +528,7 @@ class StrokeField(nn.Module):
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
     min_update_interval: int = 2  # The minimum number of steps to add new strokes.
     error_point_samples: int = 30000  # The number of samples to sample the error field.
-    fast_start_strokes: int = 30  # only use error field sample after these number of strokes.
+    step_power: float = 0.5
 
     def __init__(self, **kwargs):
         super().__init__()
@@ -544,7 +544,7 @@ class StrokeField(nn.Module):
             get_stroke(self.shape_type, self.color_type)
         self.shape_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_shape))
         self.color_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_color))
-        self.raw_density_params = nn.Parameter(torch.zeros(self.max_num_strokes))
+        self.density_params = nn.Parameter(torch.ones(self.max_num_strokes))
         self.step = 0
         self.fixed_step = 0
 
@@ -556,36 +556,54 @@ class StrokeField(nn.Module):
         for i, (p_min, p_max) in enumerate(self.color_param_ranges):
             if p_min is not None or p_max is not None:
                 self.color_params.data[:, i].clamp_(p_min, p_max)
+        self.density_params.data.clamp_(min=0.0)
 
     @torch.no_grad()
     def step_update(self, cur_step, max_step, error_field):
         """Update the stroke field at the current step."""
         steps_per_stroke = max_step // self.max_num_strokes
         assert steps_per_stroke >= 10, f'Too few steps per stroke: {steps_per_stroke}'
-        step = self.max_num_strokes * cur_step // (max_step - steps_per_stroke)
+        train_frac = cur_step / (max_step - steps_per_stroke)
+        step = int(self.max_num_strokes * min(max(train_frac, 0.0), 1.0)**self.step_power)
         step = min(self.init_num_strokes + step, self.max_num_strokes)
         if step - self.step >= self.min_update_interval:
-            train_frac = cur_step / max_step
-            print(f'Update stroke field {self.step} -> {step} ({self.max_num_strokes} total)')
+            # Check old strokes that should be reset
+            reset_indices = torch.nonzero(self.density_params[:self.step] < 0.01).squeeze(1)
+            num_resets = reset_indices.numel()
+            
+            print(f'Update stroke field {self.step} -> {step} ({self.max_num_strokes} total)'
+                  f', reset {num_resets} strokes')
 
             # Sample a batch of random points and get their errors
             coords_top = None
-            if self.step >= self.fast_start_strokes:
+            if self.step > self.init_num_strokes:
                 sample_coords = torch.rand((self.error_point_samples, 3),
                                            device=self.shape_params.device)
                 sample_coords = sample_coords * 2 - 1  # [0, 1] to range [-1, 1]
                 raw_coords = _unwarp_coords(self.warp_fn, sample_coords, self.bbox_size)
                 errors = error_field.sample_error(raw_coords)
-                errors_top, index_top = torch.topk(errors, k=step - self.step, dim=-1)
+                errors_top, index_top = torch.topk(errors, k=step - self.step + num_resets, dim=-1)
                 coords_top = sample_coords[index_top].cpu()
 
             # Sample new parameters for the new strokes.
             for i in range(self.step, step):
                 error_coord = coords_top[i - self.step] if coords_top is not None else None
-                shape_params = self.shape_param_sampler(train_frac, error_coord)
+                sample_frac = i / self.max_num_strokes
+                shape_params = self.shape_param_sampler(sample_frac, error_coord)
                 color_params = self.color_param_sampler()
                 self.shape_params.data[i] = shape_params.to(self.shape_params.device)
                 self.color_params.data[i] = color_params.to(self.color_params.device)
+                
+            # Also, reset parameters for the old strokes that has zero density.
+            offset = step - self.step
+            for i in reset_indices:
+                error_coord = coords_top[offset] if coords_top is not None else None
+                shape_params = self.shape_param_sampler(sample_frac, error_coord)
+                color_params = self.color_param_sampler()
+                self.shape_params.data[i] = shape_params.to(self.shape_params.device)
+                self.color_params.data[i] = color_params.to(self.color_params.device)
+                self.density_params[i].fill_(1.0)
+                offset += 1
 
             self.step = step
             self.fixed_step = max(self.fixed_step, step - self.max_opt_strokes)
@@ -599,8 +617,7 @@ class StrokeField(nn.Module):
         # Truncate the parameters to the current step.
         shape_params = self.shape_params[self.fixed_step:self.step]
         color_params = self.color_params[self.fixed_step:self.step]
-        density_params = torch.sigmoid(
-            self.raw_density_params[self.fixed_step:self.step]) * self.max_density
+        density_params = self.density_params[self.fixed_step:self.step] * self.density_scale
 
         # Compute alpha and color for each stroke.
         if self.training:
@@ -615,8 +632,7 @@ class StrokeField(nn.Module):
             with torch.no_grad():
                 shape_params_fixed = self.shape_params[:self.fixed_step].detach()
                 color_params_fixed = self.color_params[:self.fixed_step].detach()
-                density_params_fixed = torch.sigmoid(
-                    self.raw_density_params[:self.fixed_step].detach()) * self.max_density
+                density_params_fixed = self.density_params[:self.fixed_step].detach() * self.density_scale
                 alphas_fixed, colors_fixed = self.stroke_fn(coords, viewdirs, shape_params_fixed,
                                                             color_params_fixed, sdf_delta,
                                                             self.use_laplace_transform)
