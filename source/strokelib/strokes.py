@@ -43,7 +43,7 @@ _sdf_dict = {
     'bezier':
     ('unit_bezier', [(None, None), (None, None), (None, None), (None, None), (None, None),
                      (None, None), (None, None), (None, None), (None, None), (0, None), (0, None)],
-     lambda _: torch.cat([torch.randn(9) * 0.5, torch.ones(2) * 0.02]), False, False, False, False),
+     lambda _: torch.cat([torch.rand(9) * 2 - 1, torch.ones(2) * 0.1]), False, False, True, False),
 }
 
 _color_dict = {

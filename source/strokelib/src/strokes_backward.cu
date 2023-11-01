@@ -165,7 +165,7 @@ void stroke_backward_warpper(float *grad_shape_params,
     constexpr bool enable_rotation = (sdf_id & 0b0010) != 0;
     constexpr bool enable_singlescale = (sdf_id & 0b0100) != 0;
     constexpr bool enable_multiscale = (sdf_id & 0b1000) != 0;
-    constexpr int64_t n_threads = 1024;
+    constexpr int64_t n_threads = 512;
     const int64_t n_blocks = div_round_up(n_points * n_strokes, n_threads);
 
     at::cuda::CUDAStream stream = at::cuda::getCurrentCUDAStream();
