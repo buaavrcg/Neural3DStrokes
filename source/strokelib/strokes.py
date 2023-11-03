@@ -1,3 +1,4 @@
+import math
 import torch
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
@@ -17,8 +18,23 @@ _base_sdf_id = {
     'unit_line': 5,
     'unit_triprism': 6,
     'unit_octahedron': 7,
-    'unit_bezier': 8,
+    'quadratic_bezier': 8,
+    'cubic_bezier': 9,
+    'catmull_rom': 10,
 }
+
+def _make_spline_init_fn(num_control_points, num_radius):
+    def _init_fn(args):
+        (scale_min, scale_max, sample_coord) = args
+        scales = torch.rand(1) * (scale_max - scale_min) + scale_min
+        control_points = []
+        for i in range(num_control_points):
+            P = sample_coord + (torch.rand(3) - 0.5) * scales
+            control_points.append(P)
+        radius = (0.2 + 0.2 * torch.rand(num_radius)) * scales
+        return torch.cat(control_points + [radius])
+    
+    return _init_fn
 
 _sdf_dict = {
     'sphere': ('unit_sphere', [], None, True, False, True, False),
@@ -40,10 +56,26 @@ _sdf_dict = {
     ], lambda _: torch.cat([torch.rand(1) * 2.0 + 0.5, torch.rand(1)]), True, True, True, False),
     'triprism': ('unit_triprism', [(0, None)], lambda _: torch.rand(1), True, True, True, False),
     'octahedron': ('unit_octahedron', [], None, True, True, True, False),
-    'bezier':
-    ('unit_bezier', [(None, None), (None, None), (None, None), (None, None), (None, None),
-                     (None, None), (None, None), (None, None), (None, None), (0, None), (0, None)],
-     lambda _: torch.cat([torch.rand(9) * 2 - 1, torch.ones(2) * 0.1]), False, False, True, False),
+    'quadratic_bezier':
+    ('quadratic_bezier', [(-1, 1), (-1, 1), (-1, 1), 
+                          (-1, 1), (-1, 1), (-1, 1), 
+                          (-1, 1), (-1, 1), (-1, 1), 
+                          (0.001, 0.2), (0.001, 0.2)],
+     _make_spline_init_fn(3, 2), False, False, False, False),
+    'cubic_bezier':
+    ('cubic_bezier', [(-1, 1), (-1, 1), (-1, 1), 
+                      (-1, 1), (-1, 1), (-1, 1), 
+                      (-1, 1), (-1, 1), (-1, 1), 
+                      (-1, 1), (-1, 1), (-1, 1),
+                      (0.001, 0.2), (0.001, 0.2)],
+     _make_spline_init_fn(4, 2), False, False, False, False),
+    'catmull_rom':
+    ('catmull_rom', [(-1, 1), (-1, 1), (-1, 1), 
+                      (-1, 1), (-1, 1), (-1, 1), 
+                      (-1, 1), (-1, 1), (-1, 1), 
+                      (-1, 1), (-1, 1), (-1, 1),
+                      (0.001, 0.2), (0.001, 0.2)],
+     _make_spline_init_fn(4, 2), False, False, False, False),
 }
 
 _color_dict = {
@@ -203,20 +235,26 @@ def get_stroke(shape_type: str, color_type: str):
     if enable_translation:
         shape_param_ranges += [(-1.0, 1.0)] * 3
 
-    def shape_sampler(train_frac, error_coord=None):
-        trans_min = torch.tensor([-0.4, -0.4, -0.4])
-        trans_max = torch.tensor([0.4, 0.4, 0.4])
+    def shape_sampler(stroke_step, error_coord=None):
+        trans_min = torch.tensor([-0.5, -0.5, -0.5])
+        trans_max = torch.tensor([0.5, 0.5, 0.5])
         trans_range = torch.abs(trans_max - trans_min)
         scale_range = torch.square(trans_range).sum().sqrt()
-        scale_t = (1 - train_frac)**2.0
+        # scale_t = (1 - min(stroke_step / 500, 1.0))**2.0
+        scale_t = math.exp(-stroke_step / 200)
         scale_min = 0.02 + 0.13 * scale_t
         scale_max = 0.04 + 0.21 * scale_t
         scale_min = scale_min * scale_range
         scale_max = scale_max * scale_range
-
+        
+        if error_coord is not None:
+            sample_coord = error_coord
+        else:
+            sample_coord = trans_min + (trans_max - trans_min) * torch.rand(3)
+            
         params = []
         if shape_base_sampler is not None:
-            params.append(shape_base_sampler(train_frac))
+            params.append(shape_base_sampler((scale_min, scale_max, sample_coord)))
         if enable_singlescale:
             params.append(torch.rand(1) * (scale_max - scale_min) + scale_min)
         elif enable_multiscale:
@@ -224,10 +262,7 @@ def get_stroke(shape_type: str, color_type: str):
         if enable_rotation:
             params.append((torch.rand(3) * 2 - 1) * torch.pi)
         if enable_translation:
-            if error_coord is not None:
-                params.append(error_coord)
-            else:
-                params.append(trans_min + (trans_max - trans_min) * torch.rand(3))
+            params.append(sample_coord)
 
         if len(params) > 0:
             return torch.cat(params, dim=-1)

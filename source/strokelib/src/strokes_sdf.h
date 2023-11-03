@@ -15,7 +15,9 @@ enum BaseSDFType
     UNIT_LINE = 5,
     UNIT_TRIPRISM = 6,
     UNIT_OCTAHEDRON = 7,
-    UNIT_BEZIER = 8,
+    QUADRATIC_BEZIER = 8,
+    CUBIC_BEZIER = 9,
+    CATMULL_ROM = 10,
     NB_BASE_SDFS,
 };
 
@@ -206,7 +208,7 @@ __device__ inline float3 inverse_transform_direction(float3 dir, const float *&s
 }
 
 /////////////////////////////////////////////////////////////////////
-// Base Signed Distance Fields
+// Base Signed Distance Fields - Primitives
 /////////////////////////////////////////////////////////////////////
 
 template <BaseSDFType sdf_type>
@@ -483,10 +485,14 @@ struct BaseSDF<UNIT_OCTAHEDRON>
     }
 };
 
+/////////////////////////////////////////////////////////////////////
+// Base Signed Distance Fields - Curves
+/////////////////////////////////////////////////////////////////////
+
 template <>
-struct BaseSDF<UNIT_BEZIER>
+struct BaseSDF<QUADRATIC_BEZIER>
 {
-    __device__ static float sdf_bezier(float3 pos, float3 A, float3 B, float3 C, float r1, float r2)
+    __device__ static float sdf_quad_bezier(float3 pos, float3 A, float3 B, float3 C, float r1, float r2)
     {
         float2 res = make_float2(0.0f, 0.0f);
 
@@ -543,129 +549,10 @@ struct BaseSDF<UNIT_BEZIER>
         float3 A = make_float3(params[0], params[1], params[2]);
         float3 B = make_float3(params[3], params[4], params[5]);
         float3 C = make_float3(params[6], params[7], params[8]);
-        return sdf_bezier(pos, A, B, C, params[9], params[10]);
+        return sdf_quad_bezier(pos, A, B, C, params[9], params[10]);
     }
 
-    __device__ static float3 grad_ans_xyz_category_1(float3 b, float3 c, float3 d, float t, float2 x, float s, float p, float q, float3 grad_q_xyz, float3 grad_p_xyz, mat3 grad_d_xyz, float r1, float r2, float resx)
-    {
-        float3 m = d + (c + b * t) * t;
-        float3 grad_ansx_m = 2.0f * m;
-        float grad_m_d = 1.0f;
-        float3 grad_m_t = c + 2.0f * b * t;
-
-        float grad_uvx_h = (powf(x.x * x.x, -1.0f / 3.0f), x.x) / 6.0f;
-        float grad_uvy_h = -1.0f * (powf(x.y * x.y, -1.0f / 3.0f), x.y) / 6.0f;
-        float grad_h_s = 1.0f / 2.0f * rsqrtf(s + 1e-8f);
-        float grad_uvx_s = grad_uvx_h * grad_h_s;
-        float grad_uvy_s = grad_uvy_h * grad_h_s;
-
-        float grad_s_q = 2.0f * q;
-        float grad_s_p = 12.0f * p * p;
-        float grad_uvx_q = -1.0f * grad_uvx_h;
-        float grad_uvy_q = -1.0f * grad_uvy_h;
-
-        float3 grad_t_xyz = (grad_uvx_q * grad_q_xyz + grad_uvx_s * (grad_s_q * grad_q_xyz + grad_s_p * grad_p_xyz)) + (grad_uvy_q * grad_q_xyz + grad_uvy_s * (grad_s_q * grad_q_xyz + grad_s_p * grad_p_xyz));
-        float3 grad_ansx_xyz = grad_ansx_m * (grad_d_xyz * grad_m_d + outerproduct(grad_t_xyz, grad_m_t));
-        grad_ansx_xyz = grad_ansx_xyz * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
-
-        return grad_ansx_xyz - (r2 - r1) * grad_t_xyz;
-    }
-
-    __device__ static float3 grad_ans_xyz_category_2(float3 b, float3 c, float3 d, float t, float z, float m, float n, float p, float v, float q, float3 grad_q_xyz, float3 grad_p_xyz, mat3 grad_d_xyz, float r1, float r2, float resx)
-    {
-        float3 h = d + (c + b * t) * t;
-        float3 grad_ansx_h = 2.0f * h;
-        float grad_h_d = 1.0f;
-        float3 grad_h_t = c + 2.0f * b * t;
-        float grad_t_n = -1.0f * z;
-        float grad_t_m = -1.0f * z;
-        float grad_t_z = -m - n;
-        float grad_z_p = -1.0f / 2.0f * rsqrtf(-p + 1e-8f);
-        float grad_n_v = cosf(v) * 1.732050808f;
-        float grad_m_v = -sinf(v);
-        float grad_v_q = 1.0f / (p * z * 2.0f + 1e-8f) * (-1.0f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
-        float grad_v_p = 1.0f / p * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
-        float grad_v_z = 1.0f / z * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
-
-        float3 grad_v_xyz = grad_q_xyz * grad_v_q + grad_p_xyz * grad_v_p + grad_p_xyz * (grad_v_z * grad_z_p);
-
-        float3 grad_t_xyz = (grad_v_xyz * (grad_t_n * grad_n_v) + grad_v_xyz * (grad_t_m * grad_m_v)) + grad_p_xyz * (grad_t_z * grad_z_p);
-        float3 grad_ansx_xyz = grad_ansx_h * (grad_d_xyz * grad_h_d + outerproduct(grad_t_xyz, grad_h_t));
-        grad_ansx_xyz = grad_ansx_xyz * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
-
-        return grad_ansx_xyz - (r2 - r1) * grad_t_xyz;
-    }
-
-    __device__ static float3 grad_ans_xyz_category_3(float3 d, float resx)
-    {
-
-        return d * (-1.0f * rsqrtf(resx + 1e-8f));
-    }
-
-    __device__ static float grad_ans_params_category_1(float s, float3 b, float3 c, float3 d, float t, float2 x, float q, float p, float grad_kx_p, float grad_q_p, float grad_p_p, float3 grad_d_p, float3 grad_c_p, float3 grad_b_p, float r1, float r2, float resx)
-    {
-        float3 m = d + (c + b * t) * t;
-        float3 grad_ansx_m = 2.0f * m;
-        float grad_m_d = 1.0f;
-        float3 grad_m_t = c + 2.0f * b * t;
-
-        float grad_uvx_h = (powf(x.x * x.x + 1e-8, -1.0f / 3.0f), x.x) / 3.0f;
-        float grad_uvy_h = -1.0f * (powf(x.y * x.y + 1e-8, -1.0f / 3.0f), x.y) / 3.0f;
-        float grad_h_s = 1.0f / 2.0f * rsqrtf(s + 1e-8f);
-        float grad_uvx_s = grad_uvx_h * grad_h_s;
-        float grad_uvy_s = grad_uvy_h * grad_h_s;
-
-        float grad_s_q = 2.0f * q;
-        float grad_s_p = 12.0f * p * p;
-        float grad_uvx_q = -1.0f * grad_uvx_h;
-        float grad_uvy_q = -1.0f * grad_uvy_h;
-        float grad_m_c = t;
-        float grad_m_b = t * t;
-
-        float grad_t_p = (grad_uvx_q * grad_q_p + grad_uvx_s * (grad_s_q * grad_q_p + grad_s_p * grad_p_p)) + (grad_uvy_q * grad_q_p + grad_uvy_s * (grad_s_q * grad_q_p + grad_s_p * grad_p_p)) - grad_kx_p;
-
-        float3 grad_m_p = grad_d_p * grad_m_d + grad_c_p * grad_m_c + grad_m_t * grad_t_p + grad_b_p * grad_m_b;
-
-        float grad_ansx_p = dot(grad_ansx_m, grad_m_p);
-        grad_ansx_p = grad_ansx_p * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
-
-        return grad_ansx_p - (r2 - r1) * grad_t_p;
-    }
-
-    __device__ static float grad_ans_params_category_2(float3 b, float3 c, float3 d, float t, float z, float m, float n, float p, float v, float q, float grad_q_p, float grad_p_p, float3 grad_d_p, float grad_kx_p, float3 grad_c_p, float3 grad_b_p, float r1, float r2, float resx)
-    {
-        float3 h = d + (c + b * t) * t;
-        float3 grad_ansx_h = 2.0f * h;
-        float grad_h_d = 1.0f;
-        float3 grad_h_t = c + 2.0f * b * t;
-        float grad_t_n = -1.0f * z;
-        float grad_t_m = -1.0f * z;
-        float grad_t_z = -m - n;
-        float grad_z_p = -1.0f / 2.0f * rsqrtf(-p + 1e-8f);
-        float grad_n_v = cosf(v) * 1.732050808f;
-        float grad_m_v = -sinf(v);
-        float grad_v_q = 1.0f / (p * z * 2.0f + 1e-8f) * (-1.0f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
-        float grad_v_p = 1.0f / p * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
-        float grad_v_z = 1.0f / z * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
-
-        float grad_v_p_i = grad_v_q * grad_q_p + grad_v_p * grad_p_p + grad_v_z * grad_z_p * grad_p_p;
-
-        float grad_t_p = (grad_t_n * grad_n_v * grad_v_p_i + grad_t_m * grad_m_v * grad_v_p_i) + grad_t_z * grad_z_p * grad_p_p - grad_kx_p;
-
-        float3 grad_h_p = grad_d_p + c * grad_t_p + grad_c_p * t + b * 2.0f * t * grad_t_p + grad_b_p * t * t;
-
-        float grad_ansx_p = dot(grad_ansx_h, grad_h_p);
-        grad_ansx_p = grad_ansx_p * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
-
-        return grad_ansx_p - (r2 - r1) * grad_t_p;
-    }
-
-    __device__ static float grad_ans_params_category_3(float t, float3 d, float3 grad_d_p, float3 c, float3 b, float3 grad_c_p, float3 grad_b_p, float resx)
-    {
-
-        return (t == 0.0f ? dot(2.0f * d, grad_d_p) : dot(2.0f * (d + c + b), grad_d_p + grad_c_p + grad_b_p)) * (1.0f / 2.0f * rsqrtf(resx + 1e-8f));
-    }
-
+#if 1  // manual gradient
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
     {
         float3 A = make_float3(params[0], params[1], params[2]);
@@ -1000,49 +887,378 @@ struct BaseSDF<UNIT_BEZIER>
         }
     }
 
+    __device__ static float3 grad_ans_xyz_category_1(float3 b, float3 c, float3 d, float t, float2 x, float s, float p, float q, float3 grad_q_xyz, float3 grad_p_xyz, mat3 grad_d_xyz, float r1, float r2, float resx)
+    {
+        float3 m = d + (c + b * t) * t;
+        float3 grad_ansx_m = 2.0f * m;
+        float grad_m_d = 1.0f;
+        float3 grad_m_t = c + 2.0f * b * t;
+
+        float grad_uvx_h = (powf(x.x * x.x, -1.0f / 3.0f), x.x) / 6.0f;
+        float grad_uvy_h = -1.0f * (powf(x.y * x.y, -1.0f / 3.0f), x.y) / 6.0f;
+        float grad_h_s = 1.0f / 2.0f * rsqrtf(s + 1e-8f);
+        float grad_uvx_s = grad_uvx_h * grad_h_s;
+        float grad_uvy_s = grad_uvy_h * grad_h_s;
+
+        float grad_s_q = 2.0f * q;
+        float grad_s_p = 12.0f * p * p;
+        float grad_uvx_q = -1.0f * grad_uvx_h;
+        float grad_uvy_q = -1.0f * grad_uvy_h;
+
+        float3 grad_t_xyz = (grad_uvx_q * grad_q_xyz + grad_uvx_s * (grad_s_q * grad_q_xyz + grad_s_p * grad_p_xyz)) + (grad_uvy_q * grad_q_xyz + grad_uvy_s * (grad_s_q * grad_q_xyz + grad_s_p * grad_p_xyz));
+        float3 grad_ansx_xyz = grad_ansx_m * (grad_d_xyz * grad_m_d + outerproduct(grad_t_xyz, grad_m_t));
+        grad_ansx_xyz = grad_ansx_xyz * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
+
+        return grad_ansx_xyz - (r2 - r1) * grad_t_xyz;
+    }
+
+    __device__ static float3 grad_ans_xyz_category_2(float3 b, float3 c, float3 d, float t, float z, float m, float n, float p, float v, float q, float3 grad_q_xyz, float3 grad_p_xyz, mat3 grad_d_xyz, float r1, float r2, float resx)
+    {
+        float3 h = d + (c + b * t) * t;
+        float3 grad_ansx_h = 2.0f * h;
+        float grad_h_d = 1.0f;
+        float3 grad_h_t = c + 2.0f * b * t;
+        float grad_t_n = -1.0f * z;
+        float grad_t_m = -1.0f * z;
+        float grad_t_z = -m - n;
+        float grad_z_p = -1.0f / 2.0f * rsqrtf(-p + 1e-8f);
+        float grad_n_v = cosf(v) * 1.732050808f;
+        float grad_m_v = -sinf(v);
+        float grad_v_q = 1.0f / (p * z * 2.0f + 1e-8f) * (-1.0f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
+        float grad_v_p = 1.0f / p * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
+        float grad_v_z = 1.0f / z * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
+
+        float3 grad_v_xyz = grad_q_xyz * grad_v_q + grad_p_xyz * grad_v_p + grad_p_xyz * (grad_v_z * grad_z_p);
+
+        float3 grad_t_xyz = (grad_v_xyz * (grad_t_n * grad_n_v) + grad_v_xyz * (grad_t_m * grad_m_v)) + grad_p_xyz * (grad_t_z * grad_z_p);
+        float3 grad_ansx_xyz = grad_ansx_h * (grad_d_xyz * grad_h_d + outerproduct(grad_t_xyz, grad_h_t));
+        grad_ansx_xyz = grad_ansx_xyz * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
+
+        return grad_ansx_xyz - (r2 - r1) * grad_t_xyz;
+    }
+
+    __device__ static float3 grad_ans_xyz_category_3(float3 d, float resx)
+    {
+
+        return d * (-1.0f * rsqrtf(resx + 1e-8f));
+    }
+
+    __device__ static float grad_ans_params_category_1(float s, float3 b, float3 c, float3 d, float t, float2 x, float q, float p, float grad_kx_p, float grad_q_p, float grad_p_p, float3 grad_d_p, float3 grad_c_p, float3 grad_b_p, float r1, float r2, float resx)
+    {
+        float3 m = d + (c + b * t) * t;
+        float3 grad_ansx_m = 2.0f * m;
+        float grad_m_d = 1.0f;
+        float3 grad_m_t = c + 2.0f * b * t;
+
+        float grad_uvx_h = (powf(x.x * x.x + 1e-8, -1.0f / 3.0f), x.x) / 3.0f;
+        float grad_uvy_h = -1.0f * (powf(x.y * x.y + 1e-8, -1.0f / 3.0f), x.y) / 3.0f;
+        float grad_h_s = 1.0f / 2.0f * rsqrtf(s + 1e-8f);
+        float grad_uvx_s = grad_uvx_h * grad_h_s;
+        float grad_uvy_s = grad_uvy_h * grad_h_s;
+
+        float grad_s_q = 2.0f * q;
+        float grad_s_p = 12.0f * p * p;
+        float grad_uvx_q = -1.0f * grad_uvx_h;
+        float grad_uvy_q = -1.0f * grad_uvy_h;
+        float grad_m_c = t;
+        float grad_m_b = t * t;
+
+        float grad_t_p = (grad_uvx_q * grad_q_p + grad_uvx_s * (grad_s_q * grad_q_p + grad_s_p * grad_p_p)) + (grad_uvy_q * grad_q_p + grad_uvy_s * (grad_s_q * grad_q_p + grad_s_p * grad_p_p)) - grad_kx_p;
+
+        float3 grad_m_p = grad_d_p * grad_m_d + grad_c_p * grad_m_c + grad_m_t * grad_t_p + grad_b_p * grad_m_b;
+
+        float grad_ansx_p = dot(grad_ansx_m, grad_m_p);
+        grad_ansx_p = grad_ansx_p * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
+
+        return grad_ansx_p - (r2 - r1) * grad_t_p;
+    }
+
+    __device__ static float grad_ans_params_category_2(float3 b, float3 c, float3 d, float t, float z, float m, float n, float p, float v, float q, float grad_q_p, float grad_p_p, float3 grad_d_p, float grad_kx_p, float3 grad_c_p, float3 grad_b_p, float r1, float r2, float resx)
+    {
+        float3 h = d + (c + b * t) * t;
+        float3 grad_ansx_h = 2.0f * h;
+        float grad_t_n = -1.0f * z;
+        float grad_t_m = -1.0f * z;
+        float grad_t_z = -m - n;
+        float grad_z_p = -1.0f / 2.0f * rsqrtf(-p + 1e-8f);
+        float grad_n_v = cosf(v) * 1.732050808f;
+        float grad_m_v = -sinf(v);
+        float grad_v_q = 1.0f / (p * z * 2.0f + 1e-8f) * (-1.0f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
+        float grad_v_p = 1.0f / p * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
+        float grad_v_z = 1.0f / z * q / (p * z * 2.0f + 1e-8f) * rsqrtf(1.0f - q * q / (p * p * z * z * 4.0f) + 1e-8f) / 3.0f;
+
+        float grad_v_p_i = grad_v_q * grad_q_p + grad_v_p * grad_p_p + grad_v_z * grad_z_p * grad_p_p;
+
+        float grad_t_p = (grad_t_n * grad_n_v * grad_v_p_i + grad_t_m * grad_m_v * grad_v_p_i) + grad_t_z * grad_z_p * grad_p_p - grad_kx_p;
+
+        float3 grad_h_p = grad_d_p + c * grad_t_p + grad_c_p * t + b * 2.0f * t * grad_t_p + grad_b_p * t * t;
+
+        float grad_ansx_p = dot(grad_ansx_h, grad_h_p);
+        grad_ansx_p = grad_ansx_p * (1.0f / 2.0f * rsqrtf(resx + 1e-8));
+
+        return grad_ansx_p - (r2 - r1) * grad_t_p;
+    }
+
+    __device__ static float grad_ans_params_category_3(float t, float3 d, float3 grad_d_p, float3 c, float3 b, float3 grad_c_p, float3 grad_b_p, float resx)
+    {
+
+        return (t == 0.0f ? dot(2.0f * d, grad_d_p) : dot(2.0f * (d + c + b), grad_d_p + grad_c_p + grad_b_p)) * (1.0f / 2.0f * rsqrtf(resx + 1e-8f));
+    }
+
+#else // finite difference gradient
+    __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
+    {
+        float delta = 1e-6f;
+        atomicAdd(grad_params + 0, grad_SDF * grad_param_i<0>(pos, params, delta));
+        atomicAdd(grad_params + 1, grad_SDF * grad_param_i<1>(pos, params, delta));
+        atomicAdd(grad_params + 2, grad_SDF * grad_param_i<2>(pos, params, delta));
+        atomicAdd(grad_params + 3, grad_SDF * grad_param_i<3>(pos, params, delta));
+        atomicAdd(grad_params + 4, grad_SDF * grad_param_i<4>(pos, params, delta));
+        atomicAdd(grad_params + 5, grad_SDF * grad_param_i<5>(pos, params, delta));
+        atomicAdd(grad_params + 6, grad_SDF * grad_param_i<6>(pos, params, delta));
+        atomicAdd(grad_params + 7, grad_SDF * grad_param_i<7>(pos, params, delta));
+        atomicAdd(grad_params + 8, grad_SDF * grad_param_i<8>(pos, params, delta));
+        atomicAdd(grad_params + 9, grad_SDF * grad_param_i<9>(pos, params, delta));
+        atomicAdd(grad_params + 10, grad_SDF * grad_param_i<10>(pos, params, delta));
+        float grad_x = (sdf(pos + make_float3(delta, 0.0f, 0.0f), params) - sdf(pos - make_float3(delta, 0.0f, 0.0f), params)) / (2.0f * delta);
+        float grad_y = (sdf(pos + make_float3(0.0f, delta, 0.0f), params) - sdf(pos - make_float3(0.0f, delta, 0.0f), params)) / (2.0f * delta);
+        float grad_z = (sdf(pos + make_float3(0.0f, 0.0f, delta), params) - sdf(pos - make_float3(0.0f, 0.0f, delta), params)) / (2.0f * delta);
+        return make_float3(grad_x, grad_y, grad_z);
+    }
+
     template <int i, int j>
-    __device__ static float get_param(const float *params, float delta)
+    __device__ static inline float get_param(const float *params, float delta)
     {
         return params[j] + (j == i ? delta : 0.0f);
     }
 
     template <int i>
-    __device__ static float sdf_delta(float3 pos, const float *params, float delta)
+    __device__ static float get_sdf_delta(float3 pos, const float *params, float delta)
     {
         float3 A = make_float3(get_param<i, 0>(params, delta), get_param<i, 1>(params, delta), get_param<i, 2>(params, delta));
         float3 B = make_float3(get_param<i, 3>(params, delta), get_param<i, 4>(params, delta), get_param<i, 5>(params, delta));
         float3 C = make_float3(get_param<i, 6>(params, delta), get_param<i, 7>(params, delta), get_param<i, 8>(params, delta));
-        return sdf_bezier(pos, A, B, C, get_param<i, 9>(params, delta), get_param<i, 10>(params, delta));
+        return sdf_quad_bezier(pos, A, B, C, get_param<i, 9>(params, delta), get_param<i, 10>(params, delta));
     }
 
     template <int i>
     __device__ static float grad_param_i(float3 pos, const float *params, float delta)
     {
-        float sdf_positive = sdf_delta<i>(pos, params, +delta);
-        float sdf_negative = sdf_delta<i>(pos, params, -delta);
+        float sdf_positive = get_sdf_delta<i>(pos, params, +delta);
+        float sdf_negative = get_sdf_delta<i>(pos, params, -delta);
         float grad_params_i = (sdf_positive - sdf_negative) / (2.0f * delta);
         return grad_params_i;
     }
+#endif
+};
 
-    // __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
-    // {
-    //     float delta = 1e-6f;
+__device__ inline float2 point_segment_distance(float3 point, float3 A, float3 B)
+{
+    float3 AB = B - A;
+    float t = dot(point - A, AB) / dot(AB, AB);
+    t = clamp(t, 0.0f, 1.0f);
+    float3 P = A + t * AB;
+    return make_float2(length(point - P), t);
+}
 
-    //     atomicAdd(grad_params + 0, grad_SDF * grad_param_i<0>(pos, params, delta));
-    //     atomicAdd(grad_params + 1, grad_SDF * grad_param_i<1>(pos, params, delta));
-    //     atomicAdd(grad_params + 2, grad_SDF * grad_param_i<2>(pos, params, delta));
-    //     atomicAdd(grad_params + 3, grad_SDF * grad_param_i<3>(pos, params, delta));
-    //     atomicAdd(grad_params + 4, grad_SDF * grad_param_i<4>(pos, params, delta));
-    //     atomicAdd(grad_params + 5, grad_SDF * grad_param_i<5>(pos, params, delta));
-    //     atomicAdd(grad_params + 6, grad_SDF * grad_param_i<6>(pos, params, delta));
-    //     atomicAdd(grad_params + 7, grad_SDF * grad_param_i<7>(pos, params, delta));
-    //     atomicAdd(grad_params + 8, grad_SDF * grad_param_i<8>(pos, params, delta));
-    //     atomicAdd(grad_params + 9, grad_SDF * grad_param_i<9>(pos, params, delta));
-    //     atomicAdd(grad_params + 10, grad_SDF * grad_param_i<10>(pos, params, delta));
+template <>
+struct BaseSDF<CUBIC_BEZIER>
+{
+    static constexpr int num_samples = 10;
 
-    //     float grad_x = (sdf(pos + make_float3(delta, 0.0f, 0.0f), params) - sdf(pos - make_float3(delta, 0.0f, 0.0f), params)) / (2.0f * delta);
-    //     float grad_y = (sdf(pos + make_float3(0.0f, delta, 0.0f), params) - sdf(pos - make_float3(0.0f, delta, 0.0f), params)) / (2.0f * delta);
-    //     float grad_z = (sdf(pos + make_float3(0.0f, 0.0f, delta), params) - sdf(pos - make_float3(0.0f, 0.0f, delta), params)) / (2.0f * delta);
-    //     return make_float3(grad_x, grad_y, grad_z);
-    // }
+    __device__ static inline float3 point_cubic_bezier(float t, float3 A, float3 B, float3 C, float3 D)
+    {
+        float u = 1.0f - t;
+        float w0 = u * u * u;
+        float w1 = 3.0f * u * u * t;
+        float w2 = 3.0f * u * t * t;
+        float w3 = t * t * t;
+        return w0 * A + w1 * B + w2 * C + w3 * D;
+    }
+
+    __device__ static float2 sdf_cubic_bezier(float3 pos, float3 A, float3 B, float3 C, float3 D, float r1, float r2)
+    {
+        constexpr float step = 1.0f / num_samples;
+        float dist_min = 1e9f;
+        float t_min = 0.0f;
+        float t_start = 0.0f;
+        float3 segment_start = point_cubic_bezier(t_start, A, B, C, D);
+        for (int i = 1; i <= num_samples; i++) {
+            float t_end = i * step;
+            float3 segment_end = point_cubic_bezier(t_end, A, B, C, D);
+            float2 dist_and_t = point_segment_distance(pos, segment_start, segment_end);
+            if (dist_and_t.x < dist_min) {
+                dist_min = dist_and_t.x;
+                t_min = t_start * (1.0f - dist_and_t.y) + t_end * dist_and_t.y;
+            }
+            t_start = t_end;
+            segment_start = segment_end;
+        }
+
+        float3 P = point_cubic_bezier(t_min, A, B, C, D);
+        float dist = length(P - pos);
+        float r = lerp(r1, r2, t_min);
+        return make_float2(dist - r, t_min);
+    }
+
+    __device__ static float sdf(float3 pos, const float *params)
+    {
+        float3 A = make_float3(params[0], params[1], params[2]);
+        float3 B = make_float3(params[3], params[4], params[5]);
+        float3 C = make_float3(params[6], params[7], params[8]);
+        float3 D = make_float3(params[9], params[10], params[11]);
+        return sdf_cubic_bezier(pos, A, B, C, D, params[12], params[13]).x;
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params) {
+        float3 A = make_float3(params[0], params[1], params[2]);
+        float3 B = make_float3(params[3], params[4], params[5]);
+        float3 C = make_float3(params[6], params[7], params[8]);
+        float3 D = make_float3(params[9], params[10], params[11]);
+        float2 sdf_and_t = sdf_cubic_bezier(pos, A, B, C, D, params[12], params[13]);
+        float t = sdf_and_t.y;
+        float u = 1.0f - t;
+
+        float3 P = point_cubic_bezier(t, A, B, C, D);
+        float3 v = P - pos;
+        float3 grad_v = grad_SDF * 2.0f * v;
+        float3 grad_P = grad_v;
+        float3 grad_A = grad_P * (u * u * u);
+        float3 grad_B = grad_P * (3.0f * u * u * t);
+        float3 grad_C = grad_P * (3.0f * u * t * t);
+        float3 grad_D = grad_P * (t * t * t);
+        float grad_r1 = -grad_SDF * u;
+        float grad_r2 = -grad_SDF * t;
+
+        atomicAdd3(grad_params + 0, grad_A);
+        atomicAdd3(grad_params + 3, grad_B);
+        atomicAdd3(grad_params + 6, grad_C);
+        atomicAdd3(grad_params + 9, grad_D);
+        atomicAdd(grad_params + 12, grad_r1);
+        atomicAdd(grad_params + 13, grad_r2);
+
+        return -grad_v;
+    }
+};
+
+template <>
+struct BaseSDF<CATMULL_ROM>
+{
+    static constexpr int num_samples = 10;
+
+    __device__ static inline float3 point_catmull_rom(float t, float3 A, float3 B, float3 C, float3 D)
+    {
+        float t2 = t * t;
+        float t3 = t2 * t;
+        return t3 * A + t2 * B + t * C + D;
+    }
+
+    __device__ static float2 sdf_catmull_rom(float3 pos, float3 p0, float3 p1, float3 p2, float3 p3, float r1, float r2)
+    {
+        float t01 = sqrt(length(p0 - p1) + 1e-8f);
+        float t12 = sqrt(length(p1 - p2) + 1e-8f);
+        float t23 = sqrt(length(p2 - p3) + 1e-8f);
+
+        float3 m1 = p2 - p1 + t12 * ((p1 - p0) / t01 - (p2 - p0) / (t01 + t12));
+        float3 m2 = p2 - p1 + t12 * ((p3 - p2) / t23 - (p3 - p1) / (t12 + t23));
+        float3 A = 2.0f * (p1 - p2) + m1 + m2;
+        float3 B = 3.0f * (p2 - p1) - 2.0f * m1 - m2;
+        float3 C = m1;
+        float3 D = p1;
+
+        constexpr float step = 1.0f / num_samples;
+        float dist_min = 1e9f;
+        float t_min = 0.0f;
+        float t_start = 0.0f;
+        float3 segment_start = point_catmull_rom(t_start, A, B, C, D);
+        for (int i = 1; i <= num_samples; i++) {
+            float t_end = i * step;
+            float3 segment_end = point_catmull_rom(t_end, A, B, C, D);
+            float2 dist_and_t = point_segment_distance(pos, segment_start, segment_end);
+            if (dist_and_t.x < dist_min) {
+                dist_min = dist_and_t.x;
+                t_min = t_start * (1.0f - dist_and_t.y) + t_end * dist_and_t.y;
+            }
+            t_start = t_end;
+            segment_start = segment_end;
+        }
+
+        float3 P = point_catmull_rom(t_min, A, B, C, D);
+        float dist = length(P - pos);
+        float r = lerp(r1, r2, t_min);
+        return make_float2(dist - r, t_min);
+    }
+
+    __device__ static float sdf(float3 pos, const float *params)
+    {
+        float3 p0 = make_float3(params[0], params[1], params[2]);
+        float3 p1 = make_float3(params[3], params[4], params[5]);
+        float3 p2 = make_float3(params[6], params[7], params[8]);
+        float3 p3 = make_float3(params[9], params[10], params[11]);
+        return sdf_catmull_rom(pos, p0, p1, p2, p3, params[12], params[13]).x;
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
+    {
+        float3 p0 = make_float3(params[0], params[1], params[2]);
+        float3 p1 = make_float3(params[3], params[4], params[5]);
+        float3 p2 = make_float3(params[6], params[7], params[8]);
+        float3 p3 = make_float3(params[9], params[10], params[11]);
+        float t = sdf_catmull_rom(pos, p0, p1, p2, p3, params[12], params[13]).y;
+
+        float3 p0p1 = p0 - p1;
+        float3 p1p2 = p1 - p2;
+        float3 p2p3 = p2 - p3;
+        float t01 = sqrt(length(p0p1) + 1e-8f);
+        float t12 = sqrt(length(p1p2) + 1e-8f);
+        float t23 = sqrt(length(p2p3) + 1e-8f);
+
+        float3 m1 = p2 - p1 + t12 * ((p1 - p0) / t01 - (p2 - p0) / (t01 + t12));
+        float3 m2 = p2 - p1 + t12 * ((p3 - p2) / t23 - (p3 - p1) / (t12 + t23));
+        float3 A = 2.0f * (p1 - p2) + m1 + m2;
+        float3 B = 3.0f * (p2 - p1) - 2.0f * m1 - m2;
+        float3 C = m1;
+        float3 D = p1;
+
+        float3 P = point_catmull_rom(t, A, B, C, D);
+        float3 v = P - pos;
+        float3 grad_v = grad_SDF * 2.0f * v;
+        float3 grad_P = grad_v;
+        float3 grad_A = grad_P * (t * t * t);
+        float3 grad_B = grad_P * (t * t);
+        float3 grad_C = grad_P * t;
+        float3 grad_D = grad_P;
+        float3 grad_m1 = grad_A - grad_B * 2.0f + grad_C;
+        float3 grad_m2 = grad_A - grad_B;
+
+        float dm1_dp0 = t12 / (t01 + t12) - t12 / t01;
+        float dm1_dp1 = -1.0f + t12 / t01;
+        float dm1_dp2 = 1.0f - t12 / (t01 + t12);
+        float dm2_dp1 = -1.0f + t12 / (t12 + t23);
+        float dm2_dp2 = 1.0f - t12 / t23;
+        float dm2_dp3 = t12 / t23 - t12 / (t12 + t23);
+        float3 dm1_dt01 = t12 * ((p2 - p0) / ((t01 + t12) * (t01 + t12)) - (p1 - p0) / (t01 * t01));
+        float3 dm1_dt12 = (p1 - p0) / t01 + t12 * (p2 - p0) / ((t01 + t12) * (t01 + t12)) - (p2 - p0) / (t01 + t12);
+        float3 dm2_dt12 = (p2 - p1) / t23 + t12 * (p3 - p1) / ((t12 + t23) * (t12 + t23)) - (p3 - p1) / (t12 + t23);
+        float3 dm2_dt23 = t12 * ((p2 - p3) / (t23 * t23) + (p3 - p1) / ((t12 + t23) * (t12 + t23)));
+        float3 dt01_dp0p1 = p0p1 / (2.0f * pow(dot(p0p1, p0p1) + 1e-8f, 0.75f));
+        float3 dt12_dp1p2 = p1p2 / (2.0f * pow(dot(p1p2, p1p2) + 1e-8f, 0.75f));
+        float3 dt23_dp2p3 = p2p3 / (2.0f * pow(dot(p2p3, p2p3) + 1e-8f, 0.75f));
+
+        float3 grad_p0 = grad_m1 * (dm1_dp0 + dm1_dt01 * dt01_dp0p1);
+        float3 grad_p1 = grad_A * 2.0f + grad_B * -3.0f + grad_D + grad_m1 * (dm1_dp1 - dm1_dt01 * dt01_dp0p1 + dm1_dt12 * dt12_dp1p2) + grad_m2 * (dm2_dp1 + dm2_dt12 * dt12_dp1p2);
+        float3 grad_p2 = grad_A * -2.0f + grad_B * 3.0f + grad_m1 * (dm1_dp2 - dm1_dt12 * dt12_dp1p2) + grad_m2 * (dm2_dp2 - dm2_dt12 * dt12_dp1p2 + dm2_dt23 * dt23_dp2p3);
+        float3 grad_p3 = grad_m2 * (dm2_dp3 - dm2_dt23 * dt23_dp2p3);
+        atomicAdd3(grad_params + 0, grad_p0);
+        atomicAdd3(grad_params + 3, grad_p1);
+        atomicAdd3(grad_params + 6, grad_p2);
+        atomicAdd3(grad_params + 9, grad_p3);
+
+        float grad_r1 = -grad_SDF * (1.0f - t);
+        float grad_r2 = -grad_SDF * t;
+        atomicAdd(grad_params + 12, grad_r1);
+        atomicAdd(grad_params + 13, grad_r2);
+
+        return -grad_v;
+    }
 };

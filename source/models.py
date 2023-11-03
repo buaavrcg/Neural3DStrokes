@@ -525,7 +525,7 @@ class StrokeField(nn.Module):
     use_laplace_transform: bool = False  # If True, use sigmoid for soft clamping.
     disable_density_normals: bool = True  # If True don't compute normals.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
-    warp_fn = 'contract'  # The warp function used to warp the input coordinates.
+    warp_fn = None  # The warp function used to warp the input coordinates.
     min_update_interval: int = 2  # The minimum number of steps to add new strokes.
     error_point_samples: int = 30000  # The number of samples to sample the error field.
     step_power: float = 0.5
@@ -588,8 +588,7 @@ class StrokeField(nn.Module):
             # Sample new parameters for the new strokes.
             for i in range(self.step, step):
                 error_coord = coords_top[i - self.step] if coords_top is not None else None
-                sample_frac = i / self.max_num_strokes
-                shape_params = self.shape_param_sampler(sample_frac, error_coord)
+                shape_params = self.shape_param_sampler(i, error_coord)
                 color_params = self.color_param_sampler()
                 self.shape_params.data[i] = shape_params.to(self.shape_params.device)
                 self.color_params.data[i] = color_params.to(self.color_params.device)
@@ -598,7 +597,7 @@ class StrokeField(nn.Module):
             offset = step - self.step
             for i in reset_indices:
                 error_coord = coords_top[offset] if coords_top is not None else None
-                shape_params = self.shape_param_sampler(sample_frac, error_coord)
+                shape_params = self.shape_param_sampler(step, error_coord)
                 color_params = self.color_param_sampler()
                 self.shape_params.data[i] = shape_params.to(self.shape_params.device)
                 self.color_params.data[i] = color_params.to(self.color_params.device)

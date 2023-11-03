@@ -1,17 +1,18 @@
-Config.exp_name = 'lego_15_catmull'
-Config.dataset_loader = 'blender'
-Config.data_dir = 'data/nerf_synthetic/lego'
-Config.near = 2
-Config.far = 6
-Config.factor = 2
-Config.train_render_every = 100
-Config.max_steps = 15000
+Config.exp_name = 'leaves_01'
+Config.dataset_loader = 'llff'
+Config.data_dir = 'data/nerf_llff_data/leaves'
+Config.near = 0.001
+Config.far = 1.0
+Config.factor = 8
+Config.forward_facing = True
+Config.train_render_every = 1000
+Config.max_steps = 25000
 Config.data_loss_mult = 1.0
 Config.mask_loss_mult = 0.01
 Config.sinkhorn_loss_mult = 0.0
 Config.density_reg_loss_mult = 0.0001
 Config.lr_init = 0.01
-Config.lr_final = 0.0003
+Config.lr_final = 0.0002
 Config.train_sample_multipler_init = 0.25
 Config.train_sample_final_frac = 0.8
 
@@ -20,19 +21,18 @@ Model.raydist_fn = None
 Model.num_levels = 2
 Model.num_prop_samples = 32
 Model.num_nerf_samples = 32
+Model.opaque_background = True
 
-StrokeField.bbox_size = 3.0
+StrokeField.bbox_size = 2.0
 StrokeField.warp_fn = None
-StrokeField.shape_type = 'catmull_rom'
+StrokeField.shape_type = 'ellipsoid'
 StrokeField.color_type = 'constant_rgb'
 StrokeField.use_laplace_transform = True
-StrokeField.max_num_strokes = 500
-StrokeField.max_opt_strokes = 500
+StrokeField.max_num_strokes = 1000
+StrokeField.max_opt_strokes = 1000
 StrokeField.init_num_strokes = 20
-StrokeField.sdf_delta = 0.015
-StrokeField.sdf_delta_eval = 0.005
 
-MLP.bbox_size = 3.0
+MLP.bbox_size = 2.0
 MLP.warp_fn = None
 
 PropMLP.disable_rgb = True
