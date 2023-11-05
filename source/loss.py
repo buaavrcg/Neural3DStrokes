@@ -521,3 +521,106 @@ class CLIPLoss(nn.Module):
                 loss += self.negative_mult * neg_similarity.mean()
         return loss / self.num_augs * self.loss_mult
             
+            
+class DiffusionLoss(nn.Module):
+    def __init__(self, device, config):
+        super().__init__()
+        import transformers
+        from diffusers import DDIMScheduler, StableDiffusionPipeline
+        
+        # suppress partial model loading warning
+        transformers.logging.set_verbosity_error()
+        
+        model_key = "stabilityai/stable-diffusion-2-1-base"
+        self.device = device
+        self.precision_t = torch.float16 if config.diffusion_model_use_fp16 else torch.float32
+        self.loss_mult = config.diffusion_loss_mult
+        self.guidance_scale = 100
+        
+        # Create model
+        pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.precision_t)
+        pipe = pipe.to(self.device)
+        # pipe.enable_sequential_cpu_offload()
+        # pipe.enable_vae_slicing()
+        # pipe.unet.to(memory_format=torch.channels_last)
+        # pipe.enable_attention_slicing(1)
+        
+        self.vae = pipe.vae
+        self.tokenizer = pipe.tokenizer
+        self.text_encoder = pipe.text_encoder
+        self.unet = pipe.unet
+        self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.precision_t)
+        del pipe
+        
+        self.num_train_timesteps = self.scheduler.config.num_train_timesteps
+        self.min_step = int(self.num_train_timesteps * config.diffusion_t_range[0])
+        self.max_step = int(self.num_train_timesteps * config.diffusion_t_range[1])
+        self.alphas = self.scheduler.alphas_cumprod.to(device) # for convenience
+        self.transform = torchvision.transforms.Compose([
+            torchvision.transforms.Resize(224, antialias=True),
+        ])
+        
+        positive_prompts = config.diffusion_positive_prompt.split(",")
+        negative_prompts = config.diffusion_negative_prompt.split(",")
+        self.positive_text_embeds = self.get_text_embeds(positive_prompts)
+        self.negative_text_embeds = self.get_text_embeds(negative_prompts)
+        
+        print(f'Loaded diffusion model: {model_key}')
+        
+    @torch.no_grad()
+    def get_text_embeds(self, prompts):
+        inputs = self.tokenizer(prompts, padding='max_length', max_length=self.tokenizer.model_max_length, return_tensors='pt')
+        embeddings = self.text_encoder(inputs.input_ids.to(self.device))[0].mean(0, keepdim=True)
+        return embeddings
+    
+    def decode_latents(self, latents):
+        latents = 1 / self.vae.config.scaling_factor * latents
+        imgs = self.vae.decode(latents).sample
+        imgs = (imgs / 2 + 0.5).clamp(0, 1)
+        return imgs
+
+    def encode_imgs(self, imgs):
+        imgs = 2 * imgs - 1
+        posterior = self.vae.encode(imgs).latent_dist
+        latents = posterior.sample() * self.vae.config.scaling_factor
+        return latents
+        
+    def forward(self, image):
+        image = image.to(self.precision_t)
+        # interp to 512x512 to be fed into vae.
+        image_512 = nn.functional.interpolate(image, (512, 512), mode='bilinear', align_corners=False)
+        # encode image into latents with vae, requires grad!
+        latents = self.encode_imgs(image_512)
+        
+        # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
+        t = torch.randint(self.min_step, self.max_step + 1, (latents.shape[0],), dtype=torch.long, device=self.device)
+        
+        # predict the noise residual with unet, NO grad!
+        with torch.no_grad():
+            # prepare text embeds
+            text_embeds = torch.cat([self.positive_text_embeds.expand(latents.shape[0], -1, -1), 
+                                     self.negative_text_embeds.expand(latents.shape[0], -1, -1)])
+            
+            # add noise
+            noise = torch.randn_like(latents)
+            latents_noisy = self.scheduler.add_noise(latents, noise, t)
+            # pred noise
+            latent_model_input = torch.cat([latents_noisy] * 2)
+            tt = torch.cat([t] * 2)
+            noise_pred = self.unet(latent_model_input, tt, encoder_hidden_states=text_embeds).sample
+
+            # perform guidance (high scale from paper!)
+            noise_pred_pos, noise_pred_neg = noise_pred.chunk(2)
+            noise_pred = noise_pred_neg + self.guidance_scale * (noise_pred_pos - noise_pred_neg)
+            
+        # w(t), sigma_t^2
+        w = (1 - self.alphas[t])
+        grad = 1.0 * w[:, None, None, None] * (noise_pred - noise)
+        grad = torch.nan_to_num(grad)
+        
+        targets = (latents - grad).detach()
+        loss = nn.functional.mse_loss(latents.float(), targets, reduction='mean')
+        
+        return loss * self.loss_mult
+        
+        

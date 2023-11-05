@@ -100,6 +100,11 @@ class Config:
     transmittance_loss_mult: float = 0.  # Multiplier on the transmittance loss.
     transmittance_target: float = 0.88  # Target transmittance value.
     entropy_loss_mult: float = 0.  # Multiplier on the entropy loss.
+    diffusion_loss_mult: float = 0.  # Multiplier on the SDS loss.
+    diffusion_positive_prompt: str = ''  # The positive prompt of SDS loss.
+    diffusion_negative_prompt: str = ''  # The negative prompt of SDS loss.
+    diffusion_t_range: tuple[float, float] = (0.02, 0.98)  # The range of t values to use for SDS.
+    diffusion_model_use_fp16: bool = True  # If True, use fp16 for the diffusion model.
 
     # Eval configs
     num_showcase_images: int = 5  # The number of test-set images to showcase.

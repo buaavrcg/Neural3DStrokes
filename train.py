@@ -182,6 +182,12 @@ def init_loss(cfg, device):
         clip_loss = loss_fn.CLIPLoss(device, cfg)
     else:
         clip_loss = None
+        
+    global diffusion_loss
+    if cfg.diffusion_loss_mult > 0:
+        diffusion_loss = loss_fn.DiffusionLoss(device, cfg)
+    else:
+        diffusion_loss = None
 
 
 def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tensor, dict]:
@@ -226,6 +232,10 @@ def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tenso
     # CLIP loss
     if cfg.clip_loss_mult > 0 and clip_loss:
         losses['clip'] = clip_loss(renderings[-1]['rgb'].permute(0, 3, 1, 2))
+        
+    # score distillation loss
+    if cfg.diffusion_loss_mult > 0 and diffusion_loss:
+        losses['diffusion'] = diffusion_loss(renderings[-1]['rgb'].permute(0, 3, 1, 2))
         
     # transmittance loss for zero-shot generation
     if cfg.transmittance_loss_mult > 0:
