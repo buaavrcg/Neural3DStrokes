@@ -244,7 +244,7 @@ class Dataset(torch.utils.data.Dataset):
         self.cameras = (self.pixtocams, self.camtoworlds, self.distortion_params, self.pixtocam_ndc)
 
         # Seed the queue with one batch to avoid race condition.
-        if self.split == DataSplit.TRAIN and not config.compute_visibility:
+        if self.split == DataSplit.TRAIN:
             self._next_fn = self._next_train
         else:
             self._next_fn = self._next_test
@@ -254,7 +254,7 @@ class Dataset(torch.utils.data.Dataset):
         return self._n_examples
 
     def __len__(self):
-        if self.split == DataSplit.TRAIN and not self.config.compute_visibility:
+        if self.split == DataSplit.TRAIN:
             return 1000
         else:
             return self._n_examples

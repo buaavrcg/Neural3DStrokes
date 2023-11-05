@@ -95,17 +95,18 @@ def main():
 
     # metric handler
     metric_harness = image_utils.MetricHarness()
-
+    
     last_step = 0
     out_dir = os.path.join(config.exp_path, 'path_renders' if config.render_path else 'test_preds')
     path_fn = lambda x: os.path.join(out_dir, x)
-
     if not config.eval_only_once:
         summary_writer = tensorboard.SummaryWriter(os.path.join(config.exp_path, 'eval'))
         
     # Use more samples for evaluation.
     model.num_prop_samples *= config.eval_sample_multipler
     model.num_nerf_samples *= config.eval_sample_multipler
+    
+    # Evaluation loop
     while True:
         step = checkpoints.restore_checkpoint(config.ckpt_dir, accelerator, logger)
         if step <= last_step:
@@ -130,7 +131,6 @@ def main():
                 continue
             logger.info(f'Evaluating image {idx + 1}/{dataset.size}')
             
-            model.nerf.step = model.nerf.max_num_strokes
             rendering = models.render_image(model, accelerator, batch, config)
 
             if not accelerator.is_main_process:  # Only record via host 0.

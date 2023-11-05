@@ -1,0 +1,63 @@
+Config.exp_name = 'clip_23'
+Config.dataset_loader = 'blender'
+Config.data_dir = 'data/nerf_synthetic/lego'
+Config.near = 2
+Config.far = 6
+
+# Config.dataset_loader = 'llff'
+# Config.data_dir = 'data/nerf_llff_data/fern'
+# Config.forward_facing = True
+# Config.near = 0
+# Config.far = 1
+
+Config.factor = 4
+Config.train_render_every = 100
+Config.max_steps = 15000
+Config.data_loss_mult = 0.0
+Config.mask_loss_mult = 0.00
+Config.sinkhorn_loss_mult = 0.0
+Config.density_reg_loss_mult = 0.0000
+Config.style_loss_mult = 0.0
+Config.clip_loss_mult = 1.0
+Config.transmittance_loss_mult = 0.0
+Config.entropy_loss_mult = 0.01
+Config.lr_init = 0.01
+Config.lr_final = 0.0003
+Config.train_sample_multipler_init = 0.25
+Config.train_sample_final_frac = 0.8
+Config.patch_size = 200
+Config.batch_size = 40000
+Config.style_target_image = 'style_examples/scream.jpg'
+Config.style_transfer_shape = True
+Config.clip_positive_prompt = '3D rendering picture of a cat'
+# Config.clip_negative_prompt = 'messy unmeaningful random picture'
+# Config.load_checkpoint = 'exp/lego_16_record_step/checkpoints'
+# Config.fix_shape_params = True
+# Config.fix_color_params = True
+# Config.fix_density_params = True
+
+Model.use_stroke_field = True
+Model.raydist_fn = None
+Model.num_levels = 2
+Model.num_prop_samples = 32
+Model.num_nerf_samples = 32
+# Model.opaque_background = True
+Model.bg_intensity_range = (0.0, 1.0)
+
+StrokeField.bbox_size = 2.0
+StrokeField.warp_fn = None
+StrokeField.shape_type = 'ellipsoid'
+StrokeField.color_type = 'constant_rgb'
+StrokeField.use_laplace_transform = True
+StrokeField.max_num_strokes = 100
+StrokeField.max_opt_strokes = 100
+StrokeField.init_num_strokes = 100
+StrokeField.use_error_field = False
+StrokeField.step_power = 0.75
+# StrokeField.sdf_delta = 0.015
+# StrokeField.sdf_delta_eval = 0.005
+
+MLP.bbox_size = 2.0
+MLP.warp_fn = None
+
+PropMLP.disable_rgb = True

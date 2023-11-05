@@ -53,6 +53,7 @@ class Config:
     early_exit_steps: Optional[int] = None  # Early stopping, for debugging.
     checkpoint_every: int = 5000  # The number of steps to save a checkpoint.
     resume_from_checkpoint: bool = True  # whether to resume from checkpoint.
+    load_checkpoint: str = ''  # If not empty, load weights from this checkpoint.
     checkpoints_total_limit: int = 1
     gradient_scaling: bool = False  # If True, scale gradients as in https://gradient-scaling.github.io/.
     print_every: int = 100  # The number of steps between reports to tensorboard.
@@ -68,9 +69,11 @@ class Config:
     interlevel_loss_mult: float = 0.0  # Mult. for the loss on the proposal MLP.
     anti_interlevel_loss_mult: float = 0.01  # Mult. for the loss on the proposal MLP.
     pulse_width = [0.03, 0.003]  # Mult. for the loss on the proposal MLP.
-    hash_decay_mult: float = 0.1  # Mult. for the loss on the hash feature decay.
     train_sample_multipler_init: float = 1.  # Initial sample multiplier.
     train_sample_final_frac: float = 0.9  # Train fraction to reach final sample multiplier.
+    fix_shape_params: bool = False  # If True, fix the shape parameters of the stroke field.
+    fix_color_params: bool = False  # If True, fix the color parameters of the stroke field.
+    fix_density_params: bool = False  # If True, fix the densities of the stroke field.
     
     lr_init: float = 0.01  # The initial learning rate.
     lr_final: float = 0.003  # The final learning rate.
@@ -83,9 +86,20 @@ class Config:
     grad_max_val: float = 0.  # Gradient clipping value, disabled if == 0.
     distortion_loss_mult: float = 0.005  # Multiplier on the distortion loss.
     opacity_loss_mult: float = 0.  # Multiplier on the distortion loss.
+    hash_decay_mult: float = 0.1  # Mult. for the loss on the hash feature decay.
     error_loss_mult: float = 0.1  # Multiplier on the error loss.
     error_loss_lower_lambda: float = 10.0  # Multiplier on the lower error loss.
     density_reg_loss_mult: float = 0.  # Multiplier on the density regularization loss.
+    style_loss_mult: float = 0.  # Multiplier on the perceptual style loss.
+    style_target_image: str = ''  # A path to the target style image.
+    style_transfer_shape: bool = False  # If True, transfer the style of the shape.
+    clip_loss_mult: float = 0.  # Multiplier on the clip loss.
+    clip_negative_mult: float = 0.3  # Multiplier on the negative clip prompts.
+    clip_positive_prompt: str = ''  # The positive prompt of clip target, can be multiple sentences separated by ','.
+    clip_negative_prompt: str = ''  # The negative prompt of clip target, can be multiple sentences separated by ','.
+    transmittance_loss_mult: float = 0.  # Multiplier on the transmittance loss.
+    transmittance_target: float = 0.88  # Target transmittance value.
+    entropy_loss_mult: float = 0.  # Multiplier on the entropy loss.
 
     # Eval configs
     num_showcase_images: int = 5  # The number of test-set images to showcase.
@@ -104,7 +118,7 @@ class Config:
     render_progressive_sample_multipler: float = 12.  # Multiplier for the number of samples.
     render_progressive_render_chunk_size_divisor: int = 16  # Divisor for render chunk size.
     render_factor: int = -1  # The downsample factor of rendered images, -1 for not used.
-    render_video_fps: int = 60  # Framerate in frames-per-second.
+    render_video_fps: int = 30  # Framerate in frames-per-second.
     render_video_crf: int = 18  # Constant rate factor for ffmpeg video quality.
     render_path_frames: int = 120  # Number of frames in render path.
     z_variation: float = 0.  # How much height variation in render path.
@@ -122,9 +136,6 @@ class Config:
     render_spline_degree: int = 5  # Polynomial degree of B-spline interpolation.
     render_spline_smoothness: float = .03  # B-spline smoothing factor, 0 for exact interpolation of keyframes.
     render_spline_interpolate_exposure: bool = False  # Interpolate per-frame exposure value from spline keyframes.
-    
-    # Extraction
-    compute_visibility: bool = False  # Compute visibility without loading GT images
 
 
 def load_config(rank: int, world_size: int) -> Config:

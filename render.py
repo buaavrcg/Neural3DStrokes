@@ -136,11 +136,11 @@ def main():
     misc.makedirs(out_dir)
 
     path_fn = lambda x: os.path.join(out_dir, x)
-
     # Ensure sufficient zero-padding of image indices in output filenames.
     zpad = max(3, len(str(dataset.size - 1)))
     idx_to_str = lambda idx: str(idx).zfill(zpad)
 
+    ### Set up model for rendering mode.
     # Use more samples for rendering.
     if config.render_progressive_strokes:
         model.num_prop_samples = 0
@@ -148,6 +148,8 @@ def main():
     else:
         model.num_prop_samples = int(model.num_prop_samples * config.eval_sample_multipler)
         model.num_nerf_samples = int(model.num_nerf_samples * config.eval_sample_multipler)
+        
+    # Render loop
     for idx in range(dataset.size):
         # If current image and next image both already exist, skip ahead.
         idx_str = idx_to_str(idx)
@@ -162,9 +164,7 @@ def main():
 
         if config.render_progressive_strokes:
             frac = ((idx + 1) / dataset.size) ** 1.5
-            model.nerf.step = int(math.ceil(model.nerf.max_num_strokes * frac))
-        else:
-            model.nerf.step = model.nerf.max_num_strokes
+            model.nerf.stroke_step_limit = int(math.ceil(model.nerf.max_num_strokes * frac))
         rendering = models.render_image(model, accelerator, batch, config)
 
         logger.info(f'Rendered in {(time.time() - eval_start_time):0.3f}s')
@@ -179,6 +179,7 @@ def main():
             misc.save_img_f32(rendering['distance_median'],
                               path_fn(f'distance_median_{idx_str}.tiff'))
             misc.save_img_f32(rendering['acc'], path_fn(f'acc_{idx_str}.tiff'))
+            
     num_files = len(glob.glob(path_fn('acc_*.tiff')))
     if accelerator.is_main_process and num_files == dataset.size:
         logger.info(f'All files found, creating videos.')

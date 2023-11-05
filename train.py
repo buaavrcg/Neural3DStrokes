@@ -55,6 +55,8 @@ def train():
     # setup model and optimizer
     model = models.Model(config=cfg)
     optimizer, lr_fn = train_utils.create_optimizer(cfg, model.parameters())
+    # setup loss
+    init_loss(cfg, accelerator.device)
 
     # load dataset
     trainset = datasets.load_dataset('train', cfg)
@@ -76,10 +78,13 @@ def train():
     model, trainloader, testloader, optimizer = \
         accelerator.prepare(model, trainloader, testloader, optimizer)
 
+    # resume or load from existing checkpoint.
     if cfg.resume_from_checkpoint:
         init_step = checkpoints.restore_checkpoint(cfg.ckpt_dir, accelerator, logger)
     else:
         init_step = 0
+    if cfg.load_checkpoint:
+        checkpoints.restore_checkpoint(cfg.load_checkpoint, accelerator, logger)
 
     module = accelerator.unwrap_model(model)
     trainiter = iter(trainloader)
@@ -165,6 +170,20 @@ def train():
     logger.info('Finish training.')
 
 
+def init_loss(cfg, device):
+    global style_loss
+    if cfg.style_loss_mult > 0 and cfg.style_target_image:
+        style_loss = loss_fn.StyleLoss(device, cfg)
+    else:
+        style_loss = None
+        
+    global clip_loss
+    if cfg.clip_loss_mult > 0 and cfg.clip_positive_prompt:
+        clip_loss = loss_fn.CLIPLoss(device, cfg)
+    else:
+        clip_loss = None
+
+
 def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tensor, dict]:
     losses = {}
 
@@ -199,6 +218,22 @@ def apply_loss(batch, renderings, ray_history, module, cfg) -> tuple[torch.Tenso
     # density regularization loss
     if cfg.density_reg_loss_mult > 0:
         losses['density_reg'] = loss_fn.density_reg_loss(module, cfg)
+
+    # style loss
+    if cfg.style_loss_mult > 0 and style_loss:
+        losses['style'] = style_loss(renderings[-1]['rgb'].permute(0, 3, 1, 2))
+        
+    # CLIP loss
+    if cfg.clip_loss_mult > 0 and clip_loss:
+        losses['clip'] = clip_loss(renderings[-1]['rgb'].permute(0, 3, 1, 2))
+        
+    # transmittance loss for zero-shot generation
+    if cfg.transmittance_loss_mult > 0:
+        losses['transmittance'] = loss_fn.transmittance_loss(renderings, cfg)
+        
+    # entropy loss for zero-shot generation
+    if cfg.entropy_loss_mult > 0:
+        losses['entropy'] = loss_fn.entropy_loss(ray_history, cfg)
 
     loss = sum(losses.values())
     stats['loss'] = loss.item()

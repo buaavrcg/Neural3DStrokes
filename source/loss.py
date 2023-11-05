@@ -2,9 +2,11 @@ import torch
 import torch.nn as nn
 import collections
 import numpy as np
+import random
+import torchvision
 from source import configs
 from source.utils import stepfun
-import random
+from source.utils import misc
 
 # _cost_matric_cache = {}
 # def _cost_matrix(batch_size, h, w, device : torch.device):
@@ -398,7 +400,124 @@ def error_loss(batch, renderings, ray_history, config: configs.Config):
 
 def density_reg_loss(model, config: configs.Config):
     total_loss = 0.
-    density_alpha = model.nerf.density_params[:model.nerf.step]
+    stroke_step = model.nerf.stroke_step.item()
+    density_alpha = model.nerf.density_params[:stroke_step]
     # Encourage the density alpha to be close to 0.
     loss = config.density_reg_loss_mult * density_alpha.mean()
     return loss
+
+
+def transmittance_loss(rendering, config: configs.Config):
+    rendering = rendering[-1]
+    T = 1.0 - rendering['acc']
+    loss = -torch.clamp(T.mean(), max=config.transmittance_target)
+    return config.transmittance_loss_mult * loss
+
+
+def entropy_loss(ray_history, config: configs.Config):
+    ray_history = ray_history[-1]
+    alphas = ray_history['weights'].clamp(1e-5, 1 - 1e-5)
+    loss_entropy = (- alphas * torch.log2(alphas) - (1 - alphas) * torch.log2(1 - alphas)).mean()
+    return config.entropy_loss_mult * loss_entropy
+
+
+class StyleLoss(nn.Module):
+    def __init__(self, device, config):
+        super().__init__()
+        vgg = torchvision.models.vgg16(pretrained=True).to(device).eval()
+        for i, layer in enumerate(vgg.features):
+            if isinstance(layer, torch.nn.MaxPool2d):
+                vgg.features[i] = torch.nn.AvgPool2d(kernel_size=2, stride=2, padding=0)
+                
+        blocks = [vgg.features[:4], vgg.features[4:9]]
+        if config.style_transfer_shape:
+            blocks.append(vgg.features[9:16])
+            blocks.append(vgg.features[16:23])
+            
+        for bl in blocks:
+            for p in bl:
+                p.requires_grad = False
+        self.blocks = torch.nn.ModuleList(blocks)
+        self.mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
+        self.std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
+        self.loss_mult = config.style_loss_mult
+
+        target_image = misc.load_img(config.style_target_image) / 255.
+        target_image = torch.from_numpy(target_image).permute(2, 0, 1).unsqueeze(0).to(device)
+        self.gram_targets = self.get_gram_matrices(target_image, detach=True)
+    
+    def get_gram_matrices(self, image, detach=False):
+        image = (image - self.mean) / self.std
+        if image.shape[-2:] != (224, 224):
+            image = nn.functional.interpolate(image, mode='bilinear', size=(224, 224), align_corners=False)
+            
+        gram_matrices = []
+        x = image
+        for block in self.blocks:
+            x = block(x)
+            b, ch, h, w = x.shape
+            f = x.view(b, ch, w * h)
+            f_t = f.transpose(1, 2)
+            gram = torch.bmm(f, f_t) / (ch * w * h)
+            if detach:
+                gram = gram.detach()
+            gram_matrices.append(gram)
+        return gram_matrices
+    
+    def forward(self, output, target=None):
+        gram_output = self.get_gram_matrices(output)
+        if target is not None:
+            gram_target = self.get_gram_matrices(target)
+        else:
+            gram_target = self.gram_targets
+        
+        loss = 0.0
+        for gm_output, gm_target in zip(gram_output, gram_target):
+            loss += torch.square(gm_output - gm_target).sum([1, 2]).mean()
+        return loss * self.loss_mult
+        
+
+class CLIPLoss(nn.Module):
+    def __init__(self, device, config):
+        super().__init__()
+        import clip
+        self.model, self.preprocess = clip.load("ViT-B/32", device=device, jit=False)
+        
+        positive_prompts = config.clip_positive_prompt.split(",")
+        positive_text = clip.tokenize(positive_prompts).to(device)
+        with torch.no_grad():
+            text_features = self.model.encode_text(positive_text)
+            self.positive_text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            
+        if config.clip_negative_prompt:
+            negative_prompts = config.clip_negative_prompt.split(",")
+            negative_text = clip.tokenize(negative_prompts).to(device)
+            with torch.no_grad():
+                text_features = self.model.encode_text(negative_text)
+                self.negative_text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        else:
+            self.negative_text_features = None
+                
+        self.transform = torchvision.transforms.Compose([
+            torchvision.transforms.RandomPerspective(fill=1, p=1, distortion_scale=0.5),
+            torchvision.transforms.RandomResizedCrop(224, scale=(0.7,0.99)),
+            # torchvision.transforms.Resize(224, antialias=True),
+            torchvision.transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+        ])
+        self.loss_mult = config.clip_loss_mult
+        self.negative_mult = config.clip_negative_mult
+        self.num_augs = 4
+        
+    def forward(self, image):
+        loss = 0.0
+        for i in range(self.num_augs):
+            image_features = self.model.encode_image(self.transform(image))
+            image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+            
+            pos_similarity = (image_features.unsqueeze(1) * self.positive_text_features.unsqueeze(0)).sum(-1)
+            loss += -pos_similarity.mean()
+            if self.negative_text_features is not None:
+                neg_similarity = (image_features.unsqueeze(1) * self.negative_text_features.unsqueeze(0)).sum(-1)
+                loss += self.negative_mult * neg_similarity.mean()
+        return loss / self.num_augs * self.loss_mult
+            
