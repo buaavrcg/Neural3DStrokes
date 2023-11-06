@@ -511,6 +511,7 @@ class StrokeField(nn.Module):
     """A vector stroke field."""
     shape_type: str = 'sphere'  # The type of shape function to use.
     color_type: str = 'constant_rgb'  # The type of color function to use.
+    composition_type: str = 'over'  # The type of composition function to use.
     init_num_strokes: int = 10  # The number of strokes to initialize.
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
@@ -641,7 +642,7 @@ class StrokeField(nn.Module):
             density_params = torch.cat([density_params_fixed, density_params], dim=-1)
 
         # Composite strokes to get the final density and color.
-        density, color = compose_strokes(alphas, colors, density_params)
+        density, color = compose_strokes(alphas, colors, density_params, self.composition_type)
 
         return density, color, coords
 

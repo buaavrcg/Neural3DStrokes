@@ -339,7 +339,7 @@ class _compositing_fn(Function):
         return grad_alphas, grad_colors, grad_density_params
 
 
-def compose_strokes(alphas: torch.Tensor, colors: torch.Tensor, density_params: torch.Tensor):
+def compose_strokes(alphas: torch.Tensor, colors: torch.Tensor, density_params: torch.Tensor, composition_type: str):
     """Composite a batch of strokes.
 
     Args:
@@ -351,4 +351,27 @@ def compose_strokes(alphas: torch.Tensor, colors: torch.Tensor, density_params: 
         density (torch.Tensor): Density values of shape [...].
         color (torch.Tensor): Color values of shape [..., color_dim].
     """
-    return _compositing_fn.apply(alphas, colors, density_params)
+    if composition_type == "over":
+        return _compositing_fn.apply(alphas, colors, density_params)
+    elif composition_type == "max":
+        alphas_indices = torch.argmax(alphas, dim=-1, keepdim=True)
+        alphas = torch.take_along_dim(alphas, alphas_indices, dim=-1).squeeze(-1)
+        density = alphas * density_params[alphas_indices].squeeze(-1)
+        color = torch.take_along_dim(colors, alphas_indices[..., None], dim=-2).squeeze(-2)
+        return density, color
+    elif composition_type == "max_density_weighted":
+        alphas_density_weighted = alphas * torch.broadcast_to(density_params, alphas.shape)
+        alphas_indices = torch.argmax(alphas_density_weighted, dim=-1, keepdim=True)
+        alphas = torch.take_along_dim(alphas, alphas_indices, dim=-1).squeeze(-1)
+        density = alphas * density_params[alphas_indices].squeeze(-1)
+        color = torch.take_along_dim(colors, alphas_indices[..., None], dim=-2).squeeze(-2)
+        return density, color
+    elif composition_type == "softmax":
+        inv_temp = 1.0 / 0.05
+        alphas_softmax = torch.softmax(alphas * inv_temp, dim=-1)
+        weighted_density = alphas * torch.broadcast_to(density_params, alphas.shape)
+        density = torch.einsum('...s,...s->...', alphas_softmax, weighted_density)
+        color = torch.einsum('...s,...sc->...c', alphas_softmax, colors)
+        return density, color
+    else:
+        assert 0, f"Unknown composition type {composition_type}"
