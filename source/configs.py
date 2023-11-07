@@ -94,9 +94,11 @@ class Config:
     style_target_image: str = ''  # A path to the target style image.
     style_transfer_shape: bool = False  # If True, transfer the style of the shape.
     clip_loss_mult: float = 0.  # Multiplier on the clip loss.
+    clip_silhouette_mult: float = 0.5  # Multiplier on the silhouette clip loss.
     clip_negative_mult: float = 0.3  # Multiplier on the negative clip prompts.
     clip_positive_prompt: str = ''  # The positive prompt of clip target, can be multiple sentences separated by ','.
     clip_negative_prompt: str = ''  # The negative prompt of clip target, can be multiple sentences separated by ','.
+    clip_use_direction_prompt: bool = False  # If True, use direction prompt for clip.
     transmittance_loss_mult: float = 0.  # Multiplier on the transmittance loss.
     transmittance_target: float = 0.88  # Target transmittance value.
     entropy_loss_mult: float = 0.  # Multiplier on the entropy loss.
@@ -119,7 +121,7 @@ class Config:
     eval_sample_multipler: float = 2.  # Multiplier for the number of samples.
 
     # Render configs
-    render_progressive_strokes: bool = True  # If True, render strokes progressively.
+    render_progressive_strokes: bool = False  # If True, render strokes progressively.
     render_progressive_sample_multipler: float = 12.  # Multiplier for the number of samples.
     render_progressive_render_chunk_size_divisor: int = 16  # Divisor for render chunk size.
     render_factor: int = -1  # The downsample factor of rendered images, -1 for not used.

@@ -255,12 +255,21 @@ def get_stroke(shape_type: str, color_type: str, init_type: str):
                 sample_coord = error_coord
             else:
                 sample_coord = trans_min + (trans_max - trans_min) * torch.rand(3)
-        elif init_type == 'gen':
-            scale_min = 0.04 + 0.10 * decay_t
-            scale_max = 0.06 + 0.18 * decay_t
+        elif init_type == 'gen_box':
+            trans_min = torch.tensor([-0.6, -0.6, -0.6])
+            trans_max = torch.tensor([0.6, 0.6, 0.6])
+            trans_range = torch.abs(trans_max - trans_min)
+            scale_range = torch.square(trans_range).sum().sqrt()
+            sample_coord = trans_min + (trans_max - trans_min) * torch.rand(3)
+            scale_dist = 1 - 2. * torch.square(sample_coord).sum().sqrt() / scale_range
+            scale_min = 0.05 * scale_range * (4 ** -scale_dist)
+            scale_max = 0.10 * scale_range * (4 ** -scale_dist)
+        elif init_type == 'gen_sphere':
+            scale_min = 0.04 + 0.06 * decay_t
+            scale_max = 0.06 + 0.09 * decay_t
             theta = torch.rand(1) * 2 * math.pi
             phi = torch.rand(1) * 2 * math.pi
-            radius = 0.1 + 0.9 * (1 - decay_t)
+            radius = 1.0 * (1 - decay_t)
             sample_coord = torch.cat([
                 radius * torch.sin(phi) * torch.cos(theta),
                 radius * torch.sin(phi) * torch.sin(theta),

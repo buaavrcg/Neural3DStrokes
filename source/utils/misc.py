@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import collections
 from PIL import Image
+from scipy.stats import norm
 
 
 class Timing:
@@ -89,3 +90,17 @@ def save_img_f32(depthmap, pth, p=0.5):
 def safe_normalize(x : np.ndarray, axis=-1, eps=1e-8):
     """Normalize a tensor by its L2 norm."""
     return x / (np.linalg.norm(x, axis=axis, keepdims=True) + eps)
+
+
+def sample_normal_dist(n: int, low: float, high: float, target_ratio=0.95):
+    """Sample from a normal distribution."""
+    # Use the percent point function (inverse of cdf) to find the z-scores for the bounds
+    lower_z = norm.ppf((1 - target_ratio) / 2)
+    upper_z = norm.ppf(1 - (1 - target_ratio) / 2)
+    
+    # Calculate the mean and std deviation of the distribution that 
+    # would place low and high at the corresponding z-scores
+    mean = (low * upper_z - high * lower_z) / (upper_z - lower_z)
+    std = (high - low) / (upper_z - lower_z)
+
+    return np.random.normal(mean, std, n)

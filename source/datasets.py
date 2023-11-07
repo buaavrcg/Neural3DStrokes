@@ -734,16 +734,26 @@ class Zeroshot(Dataset):
     """Randomly sampled camera poses for zero-shot generation."""
     
     def _rand_poses(self, size, 
-                    radius_range=[3.5, 4.5], theta_range=[-15, 40], phi_range=[0, 360], 
+                    radius_range=[3.5, 4.5], theta_range=[-15, 50], phi_range=[0, 360], 
+                    radius_normal_dist=False, theta_normal_dist=False, 
                     jitter_pose=True, jitter_center=0.015, jitter_target=0.015, jitter_up=0.01):
         """generate random poses from an orbit camera."""
         theta_range = np.deg2rad(np.array(theta_range))
         phi_range = np.deg2rad(np.array(phi_range))
         
-        radius = np.random.rand(size) * (radius_range[1] - radius_range[0]) + radius_range[0]
-        thetas = np.random.rand(size) * (theta_range[1] - theta_range[0]) + theta_range[0]
+        if radius_normal_dist:
+            radius = misc.sample_normal_dist(size, radius_range[0], radius_range[1])
+        else:
+            radius = np.random.rand(size) * (radius_range[1] - radius_range[0]) + radius_range[0]
+            
+        if theta_normal_dist:
+            thetas = misc.sample_normal_dist(size, theta_range[0], theta_range[1])
+        else:
+            thetas = np.random.rand(size) * (theta_range[1] - theta_range[0]) + theta_range[0]
+            
         phis = np.random.rand(size) * (phi_range[1] - phi_range[0]) + phi_range[0]
         phis[phis < 0] += 2 * np.pi
+        phis[phis > 2 * np.pi] -= 2 * np.pi
 
         centers = np.stack([
             radius * np.cos(thetas) * np.sin(phis),
@@ -778,15 +788,46 @@ class Zeroshot(Dataset):
         return poses, thetas, phis, radius
         
     
+    def _circle_poses(self, size, radius=3.5, theta_range=[0, 20], phi_range=[0, 360]):
+        theta_range = np.deg2rad(np.array(theta_range))
+        phi_range = np.deg2rad(np.array(phi_range))
+        
+        radius = np.ones(size) * radius
+        thetas = np.linspace(theta_range[0], theta_range[1], size)
+        phis = np.linspace(phi_range[0], phi_range[1], size)
+        centers = np.stack([
+            radius * np.cos(thetas) * np.sin(phis),
+            radius * np.cos(thetas) * np.cos(phis),
+            radius * np.sin(thetas),
+        ], axis=-1) # [N, 3]
+        
+        # lookat
+        forward_vector = misc.safe_normalize(centers)
+        up_vector = np.tile(np.array([0, 0, 1]), (size, 1))
+        right_vector = misc.safe_normalize(np.cross(forward_vector, up_vector))
+        up_vector = misc.safe_normalize(np.cross(right_vector, forward_vector))
+        
+        poses = np.tile(np.eye(4), (size, 1, 1))
+        poses[:, :3, :3] = np.stack((right_vector, up_vector, forward_vector), axis=-1)
+        poses[:, :3, 3] = centers
+        
+        # back to degree
+        thetas = np.rad2deg(thetas)
+        phis = np.rad2deg(phis)
+        
+        return poses, thetas, phis, radius
+    
+    
     def _load_renderings(self, config):
         if config.render_path:
             raise ValueError('render_path cannot be used for the zeroshot dataset.')
         
-        N = 500000
         self.height, self.width = 800 // config.factor, 800 // config.factor
         
-        # random pose on the fly
-        poses, thetas, phis, radius = self._rand_poses(N)
+        if self.split == DataSplit.TRAIN:
+            poses, thetas, phis, radius = self._rand_poses(500000)
+        else:
+            poses, thetas, phis, radius = self._circle_poses(200)
         self.camtoworlds = poses
         self.polar = thetas
         self.azimuth = phis

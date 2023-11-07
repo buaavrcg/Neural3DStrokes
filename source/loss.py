@@ -482,47 +482,89 @@ class CLIPLoss(nn.Module):
         super().__init__()
         import clip
         self.model, self.preprocess = clip.load("ViT-B/32", device=device, jit=False)
+        for p in self.model.parameters():
+            p.requires_grad = False
         
         positive_prompts = config.clip_positive_prompt.split(",")
-        positive_text = clip.tokenize(positive_prompts).to(device)
-        with torch.no_grad():
+        self.use_direction_prompt = config.clip_use_direction_prompt
+        if self.use_direction_prompt:
+            self.positive_text_features = {}
+            for key in [('front', 0, 90), ('side', 90, 90), ('back', 180, 90)]:
+                direction, azimuth_target, azimuth_range = key
+                positive_text = clip.tokenize([f'{prompt}, {direction} view' for prompt in positive_prompts]).to(device)
+                text_features = self.model.encode_text(positive_text)
+                self.positive_text_features[key] = text_features / text_features.norm(dim=-1, keepdim=True)
+        else:
+            positive_text = clip.tokenize(positive_prompts).to(device)
             text_features = self.model.encode_text(positive_text)
             self.positive_text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            
+        silhouette_text = clip.tokenize([f'silhouette mask of {prompt}' for prompt in positive_prompts]).to(device)
+        text_features = self.model.encode_text(silhouette_text)
+        self.silhouette_text_features = text_features / text_features.norm(dim=-1, keepdim=True)
             
         if config.clip_negative_prompt:
             negative_prompts = config.clip_negative_prompt.split(",")
             negative_text = clip.tokenize(negative_prompts).to(device)
-            with torch.no_grad():
-                text_features = self.model.encode_text(negative_text)
-                self.negative_text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+            text_features = self.model.encode_text(negative_text)
+            self.negative_text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         else:
             self.negative_text_features = None
                 
         self.transform = torchvision.transforms.Compose([
-            torchvision.transforms.RandomPerspective(fill=1, p=1, distortion_scale=0.5),
-            torchvision.transforms.RandomResizedCrop(224, scale=(0.7,0.99), antialias=True),
-            # torchvision.transforms.Resize(224, antialias=True),
+            # torchvision.transforms.RandomPerspective(fill=1, p=1, distortion_scale=0.5),
+            # torchvision.transforms.RandomResizedCrop(224, scale=(0.7,0.99), antialias=True),
+            torchvision.transforms.Resize(224, antialias=True),
             torchvision.transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
         ])
         self.loss_mult = config.clip_loss_mult
+        self.silhouette_mult = config.clip_silhouette_mult
         self.negative_mult = config.clip_negative_mult
-        self.num_augs = 4
+        self.num_augs = 1
+        
+    def get_text_features(self, azimuth):
+        if self.use_direction_prompt:
+            pos_feats = 0
+            weight_sum = 0
+            for (direction, azimuth_target, azimuth_range), feats in self.positive_text_features.items():
+                weight = torch.clamp(1 - torch.abs(azimuth - azimuth_target) / azimuth_range, 0, 1)
+                pos_feats += weight[:, None, None] * feats[None, :, :]
+                weight_sum += weight[:, None, None]
+            pos_feats /= (weight_sum + 1e-8)
+            guidance_mult = 1.0
+        else:
+            pos_feats = self.positive_text_features.unsqueeze(0)
+            guidance_mult = 5 - 4 * torch.abs(azimuth) / 180
+            guidance_mult /= guidance_mult.detach()  # normalize loss
+            
+        if self.negative_text_features is not None:
+            neg_feats = self.negative_text_features.unsqueeze(0)
+        else:
+            neg_feats = None
+        return pos_feats, neg_feats, guidance_mult
         
     def forward(self, batch, renderings):
         image = renderings[-1]['rgb'].permute(0, 3, 1, 2)
+        silhouette = renderings[-1]['acc'].permute(0, 1, 2).unsqueeze(1).expand(-1, 3, -1, -1)
         azimuth = batch['azimuth'][:, 0, 0, 0]
-        guidance_mult = 5 - 4 * torch.abs(azimuth) / 180
-        guidance_mult /= guidance_mult.detach()  # normalize loss
+        pos_feats, neg_feats, guidance_mult = self.get_text_features(azimuth)
         
         loss = 0.0
         for i in range(self.num_augs):
             image_features = self.model.encode_image(self.transform(image))
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             
-            pos_similarity = (image_features.unsqueeze(1) * self.positive_text_features.unsqueeze(0)).sum(-1)
+            pos_similarity = (image_features.unsqueeze(1) * pos_feats).sum(-1)
             loss += -(pos_similarity.mean(-1) * guidance_mult).mean()
-            if self.negative_text_features is not None:
-                neg_similarity = (image_features.unsqueeze(1) * self.negative_text_features.unsqueeze(0)).sum(-1)
+            
+            if self.silhouette_mult > 0:
+                silhouette_features = self.model.encode_image(self.transform(silhouette))
+                silhouette_features = silhouette_features / silhouette_features.norm(dim=-1, keepdim=True)
+                sil_similarity = (silhouette_features.unsqueeze(1) * self.silhouette_text_features.unsqueeze(0)).sum(-1)
+                loss += -self.silhouette_mult * (sil_similarity.mean(-1) * guidance_mult).mean()
+            
+            if neg_feats is not None:
+                neg_similarity = (image_features.unsqueeze(1) * neg_feats).sum(-1)
                 loss += self.negative_mult * (neg_similarity.mean(-1) * guidance_mult).mean()
                 
         return loss / self.num_augs * self.loss_mult

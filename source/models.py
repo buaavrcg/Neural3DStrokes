@@ -537,6 +537,8 @@ class StrokeField(nn.Module):
     sdf_delta_decay: float = 0.999  # Decay rate of sdf_delta for each step.
     use_laplace_transform: bool = False  # If True, use sigmoid for soft clamping.
     use_error_field: bool = True  # Use error field for new stroke initialization.
+    use_shape_grads: bool = False  # If True, use shape gradients for new stroke initialization.
+    shape_grad_ema: float = 0.99  # The ema factor for shape gradients.
     disable_density_normals: bool = True  # If True don't compute normals.
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = None  # The warp function used to warp the input coordinates.
@@ -559,6 +561,7 @@ class StrokeField(nn.Module):
         self.density_params = nn.Parameter(torch.ones(self.max_num_strokes),
                                            not config.fix_density_params)
         self.register_buffer('stroke_step', torch.tensor(0, dtype=torch.int32))
+        self.register_buffer('shape_params_grad', torch.zeros(self.max_num_strokes, self.d_shape))
         self.stroke_step_limit = None
 
     def clip_params(self):
@@ -580,16 +583,19 @@ class StrokeField(nn.Module):
         next_step = int(self.max_num_strokes * min(max(train_frac, 0.0), 1.0)**self.step_power)
         next_step = min(self.init_num_strokes + next_step, self.max_num_strokes)
         cur_step = self.stroke_step.item()
-        if next_step - cur_step >= self.min_update_interval:
-            # Check old strokes that should be reset
-            reset_indices = torch.nonzero(self.density_params[:cur_step] < 0.01).squeeze(1)
-            num_resets = reset_indices.numel()
-            
+        if self.shape_params.grad is not None:
+            self.shape_params_grad.data.copy_(self.shape_params_grad.data * self.shape_grad_ema + 
+                                              self.shape_params.grad.data * (1 - self.shape_grad_ema))
+        # Check old strokes that should be reset
+        reset_indices = torch.nonzero(self.density_params[:cur_step] < 0.01).squeeze(1)
+        num_resets = reset_indices.numel()
+        if next_step - cur_step >= self.min_update_interval or num_resets > 0:
             print(f'Update stroke field {cur_step} -> {next_step} ({self.max_num_strokes} total)'
                   f', reset {num_resets} strokes')
 
             # Sample a batch of random points and get their errors
             coords_top = None
+            get_maxgrad_shape_params = lambda _: None
             if cur_step > self.init_num_strokes and self.use_error_field:
                 sample_coords = torch.rand((self.error_point_samples, 3),
                                            device=self.shape_params.device)
@@ -598,11 +604,24 @@ class StrokeField(nn.Module):
                 errors = error_field.sample_error(raw_coords)
                 errors_top, index_top = torch.topk(errors, k=next_step - cur_step + num_resets, dim=-1)
                 coords_top = sample_coords[index_top].cpu()
+            elif cur_step > self.init_num_strokes and self.use_shape_grads:
+                shape_params_grads = self.shape_params_grad[:cur_step].sum(-1)
+                shape_params_grads[reset_indices] = -torch.inf
+                grads_top, index_top = torch.topk(shape_params_grads, 
+                                                  k=min(next_step - cur_step + num_resets, 
+                                                        cur_step - num_resets))
+                shape_params_top = self.shape_params[index_top]
+                def get_maxgrad_shape_params(idx):
+                    if idx < shape_params_top.shape[0]:
+                        return shape_params_top[idx] + self.shape_params_grad[idx] * 0.01
+                    return None
 
             # Sample new parameters for the new strokes.
             for i in range(cur_step, next_step):
                 error_coord = coords_top[i - cur_step] if coords_top is not None else None
-                shape_params = self.shape_param_sampler(i, error_coord)
+                shape_params = get_maxgrad_shape_params(i - cur_step)
+                if shape_params is None:
+                    shape_params = self.shape_param_sampler(i, error_coord)
                 color_params = self.color_param_sampler()
                 self.shape_params.data[i] = shape_params.to(self.shape_params.device)
                 self.color_params.data[i] = color_params.to(self.color_params.device)
@@ -611,7 +630,9 @@ class StrokeField(nn.Module):
             offset = next_step - cur_step
             for i in reset_indices:
                 error_coord = coords_top[offset] if coords_top is not None else None
-                shape_params = self.shape_param_sampler(next_step, error_coord)
+                shape_params = get_maxgrad_shape_params(offset)
+                if shape_params is None:
+                    shape_params = self.shape_param_sampler(next_step, error_coord)
                 color_params = self.color_param_sampler()
                 self.shape_params.data[i] = shape_params.to(self.shape_params.device)
                 self.color_params.data[i] = color_params.to(self.color_params.device)
@@ -627,7 +648,7 @@ class StrokeField(nn.Module):
         coords = _warp_coords(self.warp_fn, coords, self.bbox_size, no_warp)
 
         # Truncate the parameters to the current step.
-        stroke_step = self.stroke_step.item() + 1
+        stroke_step = self.stroke_step.item()
         fixed_step = max(0, stroke_step - self.max_opt_strokes)
         if self.stroke_step_limit is not None:
             stroke_step = min(stroke_step, self.stroke_step_limit)

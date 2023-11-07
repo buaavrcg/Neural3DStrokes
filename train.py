@@ -140,8 +140,8 @@ def train():
             # clip gradient by max/norm/nan
             train_utils.clip_gradients(model, accelerator, cfg)
             optimizer.step()
-            optimizer.zero_grad(set_to_none=True)
             model.step_update(cur_step=step, max_step=num_steps)
+            optimizer.zero_grad(set_to_none=True)
 
             # Log training summaries. This is put behind a host_id check because in
             # multi-host evaluation, all hosts need to run inference even though we
