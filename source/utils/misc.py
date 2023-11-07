@@ -84,3 +84,8 @@ def save_img_u8(img, pth):
 def save_img_f32(depthmap, pth, p=0.5):
     """Save an image (probably a depthmap) to disk as a float32 TIFF."""
     Image.fromarray(np.nan_to_num(depthmap).astype(np.float32)).save(pth, 'TIFF')
+
+
+def safe_normalize(x : np.ndarray, axis=-1, eps=1e-8):
+    """Normalize a tensor by its L2 norm."""
+    return x / (np.linalg.norm(x, axis=axis, keepdims=True) + eps)

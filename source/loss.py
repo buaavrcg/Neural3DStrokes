@@ -500,7 +500,7 @@ class CLIPLoss(nn.Module):
                 
         self.transform = torchvision.transforms.Compose([
             torchvision.transforms.RandomPerspective(fill=1, p=1, distortion_scale=0.5),
-            torchvision.transforms.RandomResizedCrop(224, scale=(0.7,0.99)),
+            torchvision.transforms.RandomResizedCrop(224, scale=(0.7,0.99), antialias=True),
             # torchvision.transforms.Resize(224, antialias=True),
             torchvision.transforms.Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
         ])
@@ -508,17 +508,23 @@ class CLIPLoss(nn.Module):
         self.negative_mult = config.clip_negative_mult
         self.num_augs = 4
         
-    def forward(self, image):
+    def forward(self, batch, renderings):
+        image = renderings[-1]['rgb'].permute(0, 3, 1, 2)
+        azimuth = batch['azimuth'][:, 0, 0, 0]
+        guidance_mult = 5 - 4 * torch.abs(azimuth) / 180
+        guidance_mult /= guidance_mult.detach()  # normalize loss
+        
         loss = 0.0
         for i in range(self.num_augs):
             image_features = self.model.encode_image(self.transform(image))
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             
             pos_similarity = (image_features.unsqueeze(1) * self.positive_text_features.unsqueeze(0)).sum(-1)
-            loss += -pos_similarity.mean()
+            loss += -(pos_similarity.mean(-1) * guidance_mult).mean()
             if self.negative_text_features is not None:
                 neg_similarity = (image_features.unsqueeze(1) * self.negative_text_features.unsqueeze(0)).sum(-1)
-                loss += self.negative_mult * neg_similarity.mean()
+                loss += self.negative_mult * (neg_similarity.mean(-1) * guidance_mult).mean()
+                
         return loss / self.num_augs * self.loss_mult
             
             

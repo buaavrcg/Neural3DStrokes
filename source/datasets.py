@@ -25,6 +25,7 @@ def load_dataset(split, config: configs.Config) -> "Dataset":
     dataset_dict = {
         'blender': Blender,
         'llff': LLFF,
+        'zeroshot': Zeroshot,
     }
     return dataset_dict[config.dataset_loader](split, config.data_dir, config)
 
@@ -217,6 +218,10 @@ class Dataset(torch.utils.data.Dataset):
         self.pixtocams: np.ndarray = None
         self.height: int = None
         self.width: int = None
+        
+        # Viewpoint information for zeroshot generation
+        self.polar: np.ndarray = None
+        self.azimuth: np.ndarray = None
 
         # Load data from disk using provided config parameters.
         self._load_renderings(config)
@@ -307,9 +312,17 @@ class Dataset(torch.utils.data.Dataset):
         batch = camera_utils.cast_ray_batch(self.cameras, pixels, self.camtype)
 
         if not self.render_path:
-            batch['rgb'] = self.images[cam_idx, pix_y_int, pix_x_int]
+            if self.images is not None:
+                batch['rgb'] = self.images[cam_idx, pix_y_int, pix_x_int]
+            else:
+                empty_image = np.ones((self.height, self.width, 3), dtype=np.float32)
+                batch['rgb'] = np.tile(empty_image[pix_y_int, pix_x_int], cam_idx.shape + (1, 1, 1))
             if self.alphas is not None:
                 batch['alphas'] = self.alphas[cam_idx, pix_y_int, pix_x_int]
+            if self.polar is not None:
+                batch['polar'] = self.polar[ray_kwargs['cam_idx']]
+            if self.azimuth is not None:
+                batch['azimuth'] = self.azimuth[ray_kwargs['cam_idx']]
         return {
             k: torch.from_numpy(v.copy()).float() if v is not None else None
             for k, v in batch.items()
@@ -715,6 +728,74 @@ class DTU(Dataset):
         self.height, self.width = images.shape[1:3]
         self.camtoworlds = camtoworlds[indices]
         self.pixtocams = pixtocams[indices]
+
+
+class Zeroshot(Dataset):
+    """Randomly sampled camera poses for zero-shot generation."""
+    
+    def _rand_poses(self, size, 
+                    radius_range=[3.5, 4.5], theta_range=[-15, 40], phi_range=[0, 360], 
+                    jitter_pose=True, jitter_center=0.015, jitter_target=0.015, jitter_up=0.01):
+        """generate random poses from an orbit camera."""
+        theta_range = np.deg2rad(np.array(theta_range))
+        phi_range = np.deg2rad(np.array(phi_range))
+        
+        radius = np.random.rand(size) * (radius_range[1] - radius_range[0]) + radius_range[0]
+        thetas = np.random.rand(size) * (theta_range[1] - theta_range[0]) + theta_range[0]
+        phis = np.random.rand(size) * (phi_range[1] - phi_range[0]) + phi_range[0]
+        phis[phis < 0] += 2 * np.pi
+
+        centers = np.stack([
+            radius * np.cos(thetas) * np.sin(phis),
+            radius * np.cos(thetas) * np.cos(phis),
+            radius * np.sin(thetas),
+        ], axis=-1) # [N, 3]
+        
+        targets = 0
+        if jitter_pose:
+            centers += (np.random.rand(*centers.shape) - 0.5) * jitter_center
+            targets = np.random.randn(*centers.shape) * jitter_target
+            
+        # lookat
+        forward_vector = misc.safe_normalize(centers - targets)
+        up_vector = np.tile(np.array([0, 0, 1]), (size, 1))
+        right_vector = misc.safe_normalize(np.cross(forward_vector, up_vector))
+        
+        if jitter_pose:
+            up_noise = np.random.randn(*up_vector.shape) * jitter_up
+        else:
+            up_noise = 0
+        up_vector = misc.safe_normalize(np.cross(right_vector, forward_vector) + up_noise)
+        
+        poses = np.tile(np.eye(4), (size, 1, 1))
+        poses[:, :3, :3] = np.stack((right_vector, up_vector, forward_vector), axis=-1)
+        poses[:, :3, 3] = centers
+        
+        # back to degree
+        thetas = np.rad2deg(thetas)
+        phis = np.rad2deg(phis)
+        
+        return poses, thetas, phis, radius
+        
+    
+    def _load_renderings(self, config):
+        if config.render_path:
+            raise ValueError('render_path cannot be used for the zeroshot dataset.')
+        
+        N = 500000
+        self.height, self.width = 800 // config.factor, 800 // config.factor
+        
+        # random pose on the fly
+        poses, thetas, phis, radius = self._rand_poses(N)
+        self.camtoworlds = poses
+        self.polar = thetas
+        self.azimuth = phis
+        self.azimuth[self.azimuth > 180] -= 360  # range in [-180, 180]
+        
+        # fixed focal
+        fov = 40
+        self.focal = .5 * self.width / np.tan(.5 * np.deg2rad(fov))
+        self.pixtocams = camera_utils.get_pixtocam(self.focal, self.width, self.height)
 
 
 if __name__ == '__main__':

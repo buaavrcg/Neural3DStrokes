@@ -1,14 +1,9 @@
-Config.exp_name = 'sd_07_nerf'
-Config.dataset_loader = 'blender'
+Config.exp_name = 'sd_05_nerf'
+Config.dataset_loader = 'zeroshot'
+# Config.dataset_loader = 'blender'
 Config.data_dir = 'data/nerf_synthetic/lego'
-Config.near = 2
+Config.near = 1
 Config.far = 6
-
-# Config.dataset_loader = 'llff'
-# Config.data_dir = 'data/nerf_llff_data/fern'
-# Config.forward_facing = True
-# Config.near = 0
-# Config.far = 1
 
 Config.factor = 4
 Config.train_render_every = 100
@@ -22,6 +17,8 @@ Config.clip_loss_mult = 0.0
 Config.transmittance_loss_mult = 0.0
 Config.entropy_loss_mult = 0.00
 Config.diffusion_loss_mult = 1.0
+Config.hash_decay_mult = 0.0
+Config.error_loss_mult = 0.0
 Config.lr_init = 0.001
 Config.lr_final = 0.0002
 # Config.train_sample_multipler_init = 0.25

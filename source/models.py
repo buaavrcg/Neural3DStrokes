@@ -289,7 +289,6 @@ class MLP(nn.Module):
     skip_layer_dir: int = 0  # Add a skip connection to 2nd MLP after Nth layers.
     num_rgb_channels: int = 3  # The number of RGB channels.
     deg_view: int = 4  # Degree of encoding for viewdirs or refdirs.
-    use_directional_enc: bool = False  # If True, use IDE to encode directions.
     bottleneck_noise: float = 0.0  # Std. deviation of training noise added to bottleneck.
     density_bias: float = -1.  # Shift added to raw densities pre-activation.
     density_noise: float = 0.  # Standard deviation of training noise added to raw density.
@@ -301,30 +300,43 @@ class MLP(nn.Module):
     bbox_size: float = 4.  # The side length of the bounding box if warp is not used.
     warp_fn = 'contract'  # The warp function used to warp the input coordinates.
 
-    # Configs for grid encoder
+    # Configs for encoder
+    use_grid_encoder: bool = True
     grid_level_interval: int = 2
     grid_level_dim: int = 4
     grid_base_resolution: int = 16
     grid_disired_resolution: int = 8192
     grid_log2_hashmap_size: int = 21
+    mlp_pe_freqs: int = 8
+    mlp_num_layers: int = 4
+    mlp_hidden_dim: int = 128
 
     def __init__(self, **kwargs):
         super().__init__()
         for k, v in kwargs.items():
             setattr(self, k, v)
 
-        self.grid_num_levels = int(
-            np.log(self.grid_disired_resolution / self.grid_base_resolution) /
-            np.log(self.grid_level_interval)) + 1
-        self.encoder = GridEncoder(input_dim=3,
-                                   num_levels=self.grid_num_levels,
-                                   level_dim=self.grid_level_dim,
-                                   base_resolution=self.grid_base_resolution,
-                                   desired_resolution=self.grid_disired_resolution,
-                                   log2_hashmap_size=self.grid_log2_hashmap_size,
-                                   gridtype='hash',
-                                   align_corners=False)
-        last_dim = self.encoder.output_dim
+        if self.use_grid_encoder:
+            self.grid_num_levels = int(
+                np.log(self.grid_disired_resolution / self.grid_base_resolution) /
+                np.log(self.grid_level_interval)) + 1
+            self.encoder = GridEncoder(input_dim=3,
+                                    num_levels=self.grid_num_levels,
+                                    level_dim=self.grid_level_dim,
+                                    base_resolution=self.grid_base_resolution,
+                                    desired_resolution=self.grid_disired_resolution,
+                                    log2_hashmap_size=self.grid_log2_hashmap_size,
+                                    gridtype='hash',
+                                    align_corners=False)
+            last_dim = self.encoder.output_dim
+        else:
+            layers = []
+            layers.append(nn.Linear(3 + 6 * self.mlp_pe_freqs, self.mlp_hidden_dim))
+            for i in range(self.mlp_num_layers):
+                layers.append(nn.ReLU())
+                layers.append(nn.Linear(self.mlp_hidden_dim, self.mlp_hidden_dim))
+            self.encoder = nn.Sequential(*layers)
+            last_dim = self.mlp_hidden_dim
 
         self.density_layer = nn.Sequential(
             nn.Linear(last_dim, 64),
@@ -361,7 +373,10 @@ class MLP(nn.Module):
         # Encode input positions
         coords = _warp_coords(self.warp_fn, coords, self.bbox_size, no_warp)
 
-        features = self.encoder(coords, bound=1.0)
+        if self.use_grid_encoder:
+            features = self.encoder(coords, bound=1.0)
+        else:
+            features = self.encoder(coord.pos_enc(coords, 0, self.mlp_pe_freqs) if self.mlp_pe_freqs > 0 else coords)
         x = self.density_layer(features)
         raw_density = x[..., 0]  # Hardcoded to a single channel.
         # Add noise to regularize the density predictions if needed.
@@ -453,7 +468,7 @@ class MLP(nn.Module):
             rgb = rgb * (1 + 2 * self.rgb_padding) - self.rgb_padding
 
         hash_levelwise_mean = None
-        if self.training:
+        if self.training and self.use_grid_encoder:
             # Compute the hash decay loss for this level.
             param_sq = torch.square(self.encoder.embeddings)
             hash_levelwise_mean = torch.zeros(self.encoder.num_levels,
@@ -511,6 +526,7 @@ class StrokeField(nn.Module):
     """A vector stroke field."""
     shape_type: str = 'sphere'  # The type of shape function to use.
     color_type: str = 'constant_rgb'  # The type of color function to use.
+    init_type: str = 'recon'  # The type of initialization to use ('recon' or 'gen').
     composition_type: str = 'over'  # The type of composition function to use.
     init_num_strokes: int = 10  # The number of strokes to initialize.
     max_num_strokes: int = 500  # The maximum number of strokes.
@@ -535,7 +551,7 @@ class StrokeField(nn.Module):
 
         self.stroke_fn, self.d_shape, self.d_color, self.shape_param_ranges, \
             self.color_param_ranges, self.shape_param_sampler, self.color_param_sampler = \
-            get_stroke(self.shape_type, self.color_type)
+            get_stroke(self.shape_type, self.color_type, self.init_type)
         self.shape_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_shape),
                                          not config.fix_shape_params)
         self.color_params = nn.Parameter(torch.zeros(self.max_num_strokes, self.d_color),

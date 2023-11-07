@@ -211,7 +211,7 @@ class _stroke_fn(Function):
         return grad_x, None, grad_shape_params, grad_color_params, None, None, None, None, None
 
 
-def get_stroke(shape_type: str, color_type: str):
+def get_stroke(shape_type: str, color_type: str, init_type: str):
     """Get the stroke function.
     
     Returns:
@@ -239,21 +239,33 @@ def get_stroke(shape_type: str, color_type: str):
         shape_param_ranges += [(-1.0, 1.0)] * 3
 
     def shape_sampler(stroke_step, error_coord=None):
-        trans_min = torch.tensor([-0.5, -0.5, -0.5])
-        trans_max = torch.tensor([0.5, 0.5, 0.5])
-        trans_range = torch.abs(trans_max - trans_min)
-        scale_range = torch.square(trans_range).sum().sqrt()
-        # scale_t = (1 - min(stroke_step / 500, 1.0))**2.0
-        scale_t = math.exp(-stroke_step / 200)
-        scale_min = 0.02 + 0.13 * scale_t
-        scale_max = 0.04 + 0.21 * scale_t
-        scale_min = scale_min * scale_range
-        scale_max = scale_max * scale_range
+        decay_t = math.exp(-stroke_step / 200)
         
-        if error_coord is not None:
-            sample_coord = error_coord
-        else:
-            sample_coord = trans_min + (trans_max - trans_min) * torch.rand(3)
+        if init_type == 'recon':
+            trans_min = torch.tensor([-0.5, -0.5, -0.5])
+            trans_max = torch.tensor([0.5, 0.5, 0.5])
+            trans_range = torch.abs(trans_max - trans_min)
+            scale_range = torch.square(trans_range).sum().sqrt()
+            scale_min = 0.02 + 0.13 * decay_t
+            scale_max = 0.04 + 0.21 * decay_t
+            scale_min = scale_min * scale_range
+            scale_max = scale_max * scale_range
+            
+            if error_coord is not None:
+                sample_coord = error_coord
+            else:
+                sample_coord = trans_min + (trans_max - trans_min) * torch.rand(3)
+        elif init_type == 'gen':
+            scale_min = 0.04 + 0.10 * decay_t
+            scale_max = 0.06 + 0.18 * decay_t
+            theta = torch.rand(1) * 2 * math.pi
+            phi = torch.rand(1) * 2 * math.pi
+            radius = 0.1 + 0.9 * (1 - decay_t)
+            sample_coord = torch.cat([
+                radius * torch.sin(phi) * torch.cos(theta),
+                radius * torch.sin(phi) * torch.sin(theta),
+                radius * torch.cos(phi),
+            ])
             
         params = []
         if shape_base_sampler is not None:
@@ -369,6 +381,14 @@ def compose_strokes(alphas: torch.Tensor, colors: torch.Tensor, density_params: 
     elif composition_type == "softmax":
         inv_temp = 1.0 / 0.05
         alphas_softmax = torch.softmax(alphas * inv_temp, dim=-1)
+        weighted_density = alphas * torch.broadcast_to(density_params, alphas.shape)
+        density = torch.einsum('...s,...s->...', alphas_softmax, weighted_density)
+        color = torch.einsum('...s,...sc->...c', alphas_softmax, colors)
+        return density, color
+    elif composition_type == "softmax_density_weighted":
+        inv_temp = 1.0 / 0.05
+        alphas_density_weighted = alphas * torch.broadcast_to(density_params, alphas.shape)
+        alphas_softmax = torch.softmax(alphas_density_weighted * inv_temp, dim=-1)
         weighted_density = alphas * torch.broadcast_to(density_params, alphas.shape)
         density = torch.einsum('...s,...s->...', alphas_softmax, weighted_density)
         color = torch.einsum('...s,...sc->...c', alphas_softmax, colors)

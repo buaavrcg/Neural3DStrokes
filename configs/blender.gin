@@ -1,4 +1,4 @@
-Config.exp_name = 'lego_25_style_freshtrain'
+Config.exp_name = 'lego_34'
 Config.dataset_loader = 'blender'
 Config.data_dir = 'data/nerf_synthetic/lego'
 Config.near = 2
@@ -40,6 +40,7 @@ StrokeField.max_opt_strokes = 500
 StrokeField.init_num_strokes = 20
 # StrokeField.sdf_delta = 0.015
 # StrokeField.sdf_delta_eval = 0.005
+# StrokeField.composition_type = 'max'
 
 MLP.bbox_size = 3.0
 MLP.warp_fn = None
