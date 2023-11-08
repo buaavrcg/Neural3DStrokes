@@ -56,3 +56,5 @@ __device__ inline void atomicAdd3(float *address, float3 val)
     atomicAdd(address + 1, val.y);
     atomicAdd(address + 2, val.z);
 }
+
+constexpr float PI = 3.14159265358979323846f;

@@ -219,6 +219,8 @@ struct BaseSDF
     // Returns dSDF/dPos and stores grad_params for given pos and shape params.
     // Note: use atomic operation on grad_params
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params);
+    // Returns the surface texture coordinate (u,v) for the given pos and shape params.
+    __device__ static float2 texcoord(float3 pos, const float *params);
 };
 
 template <>
@@ -235,6 +237,14 @@ struct BaseSDF<UNIT_SPHERE>
         float3 p_sq = pos * pos;
         float inv_norm = rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8f);
         return pos * inv_norm;
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };
 
@@ -254,6 +264,14 @@ struct BaseSDF<UNIT_CUBE>
         float grad_y = p_abs.x < p_abs.y && p_abs.y >= p_abs.z ? (pos.y < 0.0f ? -1.0f : 1.0f) : 0.0f;
         float grad_z = p_abs.x < p_abs.z && p_abs.y < p_abs.z ? (pos.z < 0.0f ? -1.0f : 1.0f) : 0.0f;
         return make_float3(grad_x, grad_y, grad_z);
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };
 
@@ -299,6 +317,14 @@ struct BaseSDF<UNIT_ROUND_CUBE>
         float grad_z = grad_p_dis.z + grad_p_dis_min_z;
 
         return make_float3(grad_x, grad_y, grad_z);
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };
 
@@ -353,6 +379,14 @@ struct BaseSDF<UNIT_CAPPED_TORUS>
         atomicAdd(grad_params + 1, -grad_SDF);
         return make_float3(grad_x, grad_y, grad_z);
     }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
+    }
 };
 
 template <>
@@ -378,6 +412,14 @@ struct BaseSDF<UNIT_CAPSULE>
         else
             atomicAdd(grad_params + 0, grad_SDF * grad_pos.y * (pos_y > 0.f ? -1.f : 1.f));
         return grad_pos;
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };
 
@@ -418,6 +460,14 @@ struct BaseSDF<UNIT_LINE>
         atomicAdd(grad_params + 0, grad_SDF * grad_param0);
         atomicAdd(grad_params + 1, grad_SDF * (1.f - 2.f * t));
         return grad_pos;
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };
 
@@ -464,6 +514,14 @@ struct BaseSDF<UNIT_TRIPRISM>
         }
         return make_float3(grad_x, grad_y, grad_z);
     }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
+    }
 };
 
 template <>
@@ -482,6 +540,14 @@ struct BaseSDF<UNIT_OCTAHEDRON>
         float grad_y = pos.y < 0.0f ? -0.57735027f : 0.57735027f;
         float grad_z = pos.z < 0.0f ? -0.57735027f : 0.57735027f;
         return make_float3(grad_x, grad_y, grad_z);
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };
 
@@ -1050,6 +1116,14 @@ struct BaseSDF<QUADRATIC_BEZIER>
         return grad_params_i;
     }
 #endif
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
+    }
 };
 
 __device__ inline float2 point_segment_distance(float3 point, float3 A, float3 B)
@@ -1138,6 +1212,14 @@ struct BaseSDF<CUBIC_BEZIER>
         atomicAdd(grad_params + 13, grad_r2);
 
         return -grad_v;
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };
 
@@ -1260,5 +1342,13 @@ struct BaseSDF<CATMULL_ROM>
         atomicAdd(grad_params + 13, grad_r2);
 
         return -grad_v;
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
     }
 };

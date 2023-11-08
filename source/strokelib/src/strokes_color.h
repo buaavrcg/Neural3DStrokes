@@ -3,16 +3,14 @@
 #include <cmath>
 #include "common.h"
 #include "helper_math.h"
-#include "noise.h"
 #include "sh.h"
 
 enum ColorType
 {
     CONSTANT_RGB = 0,
     GRADIENT_RGB = 1,
-    NOISE_BRUSH_RGB = 2,
-    CONSTANT_SH2 = 3,
-    CONSTANT_SH3 = 4,
+    CONSTANT_SH2 = 2,
+    CONSTANT_SH3 = 3,
     NB_COLORS,
 };
 
@@ -97,36 +95,6 @@ struct ColorField<GRADIENT_RGB>
         atomicAdd3(grad_params + 3, dL_pos1);
         atomicAdd3(grad_params + 6, dL_dColor * make_float3(1.0f - t));
         atomicAdd3(grad_params + 9, dL_dColor * make_float3(t));
-    }
-};
-
-template <>
-struct ColorField<NOISE_BRUSH_RGB>
-{
-    static constexpr int color_dim = 3;
-    static constexpr bool use_unit_pos = true;
-    static constexpr bool use_viewdir = false;
-    __device__ static float tint(float3 pos, const uint32_t idx_stroke)
-    {
-        float3 dir = hash31((float)idx_stroke);
-        // dir = dir * dir * dir; // pow(dir, 3.0f)
-        // float3 dir_exp = make_float3(expf(dir.x), expf(dir.y), expf(dir.z));
-        // float3 dir_softmax = dir_exp / (dir_exp.x + dir_exp.y + dir_exp.z);
-        float p = dot(pos, dir) * 12.0f;
-        float t = 1.0f + 0.4f * fbm11<4>(p);
-        // pos *= 16.0f * dir_softmax;
-        // float t = 1.0f + 0.3f * fbm13<4>(pos);
-        return clamp(t, 0.f, 1.f);
-    }
-    __device__ static void get_color(float *color_out, float3 pos, float3 viewdir, const float *params, const uint32_t idx_stroke)
-    {
-        float3 color = *(float3 *)params;
-        *(float3 *)color_out = color * tint(pos, idx_stroke);
-    }
-    __device__ static void grad_color(float *grad_params, const float *grad_color, float3 pos, float3 viewdir, const float *params, const uint32_t idx_stroke)
-    {
-        float3 dL_dColor = *(float3 *)grad_color;
-        atomicAdd3(grad_params + 0, dL_dColor * tint(pos, idx_stroke));
     }
 };
 

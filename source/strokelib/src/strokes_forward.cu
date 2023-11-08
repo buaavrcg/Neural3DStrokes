@@ -17,6 +17,7 @@ template <BaseSDFType sdf_type,
 __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
                                       float *__restrict__ color_output,
                                       float *__restrict__ sdf_output,
+                                      float *__restrict__ texcoord_output,
                                       const float *__restrict__ x,
                                       const float *__restrict__ viewdir,
                                       const float *__restrict__ shape_params,
@@ -81,12 +82,19 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
         // Compute the color output with unit pos and color parameters
         ColorField<color_type>::get_color(color_output, pos, dir, color_params, idx_stroke);
     }
+
+    if (texcoord_output) {
+        texcoord_output += idx_thread * 3;
+        *((float2*)texcoord_output) = BaseSDF<sdf_type>::texcoord(pos, shape_params);
+        texcoord_output[2] = sigmoid(sdf_value);
+    }
 }
 
 template <uint32_t id>
 void stroke_forward_warpper(float *alpha_output,
                             float *color_output,
                             float *sdf_output,
+                            float *texcoord_output,
                             const float *x,
                             const float *viewdir,
                             const float *shape_params,
@@ -122,6 +130,7 @@ void stroke_forward_warpper(float *alpha_output,
             alpha_output,
             color_output,
             sdf_output,
+            texcoord_output,
             x,
             viewdir,
             shape_params,
@@ -139,6 +148,7 @@ DECLARE_INT_TEMPLATE_ARG_LUT(stroke_forward_warpper)
 void stroke_forward(at::Tensor alpha_output,
                     at::Tensor color_output,
                     at::Tensor sdf_output,
+                    at::Tensor texcoord_output,
                     const at::Tensor x,
                     const at::Tensor viewdir,
                     const at::Tensor shape_params,
@@ -151,6 +161,7 @@ void stroke_forward(at::Tensor alpha_output,
     CHECK_FLOAT_INPUT(alpha_output);
     CHECK_FLOAT_INPUT(color_output);
     CHECK_FLOAT_INPUT(sdf_output);
+    CHECK_FLOAT_INPUT(texcoord_output);
     CHECK_FLOAT_INPUT(x);
     CHECK_FLOAT_INPUT(viewdir);
     CHECK_FLOAT_INPUT(shape_params);
@@ -172,6 +183,7 @@ void stroke_forward(at::Tensor alpha_output,
         alpha_output.data_ptr<float>(),
         color_output.data_ptr<float>(),
         sdf_output.numel() ? sdf_output.data_ptr<float>() : nullptr,
+        texcoord_output.numel() ? texcoord_output.data_ptr<float>() : nullptr,
         x.data_ptr<float>(),
         viewdir.data_ptr<float>(),
         shape_params.data_ptr<float>(),

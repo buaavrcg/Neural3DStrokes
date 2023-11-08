@@ -1,4 +1,4 @@
-Config.exp_name = 'clip_72'
+Config.exp_name = 'clip_80'
 Config.dataset_loader = 'zeroshot'
 # Config.dataset_loader = 'blender'
 Config.data_dir = 'data/nerf_synthetic/lego'
@@ -53,9 +53,9 @@ StrokeField.max_opt_strokes = 400
 StrokeField.init_num_strokes = 200
 StrokeField.use_error_field = False
 StrokeField.use_shape_grads = True
-StrokeField.density_scale = 5.0
+StrokeField.density_scale = 10.0
 StrokeField.init_type = 'gen_sphere'
-StrokeField.composition_type = 'max'
+StrokeField.composition_type = 'over'
 
 MLP.bbox_size = 2.0
 MLP.warp_fn = None

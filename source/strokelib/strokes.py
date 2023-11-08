@@ -82,12 +82,11 @@ _color_dict = {
     'constant_rgb': (0, [(0, 1)] * 3, lambda: torch.rand(3)),
     'gradient_rgb': (1, [(-1, 1)] * 6 + [(0, 1)] * 6,
                      lambda: torch.cat([torch.rand(6) - 0.5, torch.rand(6)], dim=-1)),
-    'noise_brush_rgb': (2, [(0, 1)] * 3, lambda: torch.rand(3)),
-    'constant_sh2': (3, [(None, None)] * 12, lambda: torch.randn(12)),
-    'constant_sh3': (4, [(None, None)] * 27, lambda: torch.randn(27)),
+    'constant_sh2': (2, [(None, None)] * 12, lambda: torch.randn(12)),
+    'constant_sh3': (3, [(None, None)] * 27, lambda: torch.randn(27)),
 }
 
-_color_dim = [3, 3, 3, 3, 3]
+_color_dim = [3, 3, 3, 3]
 
 
 def _make_sdf_id(base_sdf_name: str, enable_translation: bool, enable_rotation: bool,
@@ -116,7 +115,8 @@ class _stroke_fn(Function):
                 color_id: int,
                 sdf_delta: float,
                 use_laplace_transform: bool = False,
-                no_sdf: bool = True):
+                no_sdf: bool = True,
+                return_texcoord: bool = False):
         """Compute the SDF value and the base coordinates of a batch of strokes.
 
         Args:
@@ -129,6 +129,7 @@ class _stroke_fn(Function):
             color_id (int): Id of the color function to use.
             sdf_delta (float): Delta value for the clamping signed distance function.
             use_laplace_transform (bool): Use sigmoid clamping or linear clamping?
+            return_texcoord (bool): Return 3d texture coordinates (u,v,t) for color?
             no_sdf (bool): Return None for raw sdf values?
             
         Returns:
@@ -150,10 +151,12 @@ class _stroke_fn(Function):
         alpha_shape = (x.shape[0], num_strokes)
         color_shape = (x.shape[0], num_strokes, _color_dim[color_id])
         sdf_shape = (x.shape[0], num_strokes)
+        texcoord_shape = (x.shape[0], num_strokes, 3)
         alpha_output = torch.empty(alpha_shape, dtype=x.dtype, device=x.device)
         color_output = torch.empty(color_shape, dtype=x.dtype, device=x.device)
         sdf_output = torch.empty(0 if no_sdf else sdf_shape, dtype=x.dtype, device=x.device)
-        _backend.stroke_forward(alpha_output, color_output, sdf_output, x, viewdir, shape_params,
+        texcoord_output = torch.empty(0 if not return_texcoord else texcoord_shape, dtype=x.dtype, device=x.device)
+        _backend.stroke_forward(alpha_output, color_output, sdf_output, texcoord_output, x, viewdir, shape_params,
                                 color_params, sdf_id, color_id, sdf_delta, use_laplace_transform)
         if ctx.needs_input_grad[0] or ctx.needs_input_grad[2] or ctx.needs_input_grad[3]:
             ctx.save_for_backward(x, viewdir, alpha_output, shape_params, color_params)
@@ -165,11 +168,9 @@ class _stroke_fn(Function):
 
         alpha_output = alpha_output.reshape(*pre_shape, num_strokes)
         color_output = color_output.reshape(*pre_shape, num_strokes, -1)
-        if no_sdf:
-            return alpha_output, color_output
-        else:
-            sdf_output = sdf_output.reshape(*pre_shape, num_strokes)
-            return alpha_output, color_output, sdf_output
+        sdf_output = None if no_sdf else sdf_output.reshape(*pre_shape, num_strokes)
+        texcoord_output = texcoord_output.reshape(*pre_shape, num_strokes, 3) if return_texcoord else None
+        return alpha_output, color_output, sdf_output, texcoord_output
 
     @staticmethod
     @once_differentiable
@@ -177,7 +178,8 @@ class _stroke_fn(Function):
     def backward(ctx,
                  grad_alpha: torch.Tensor,
                  grad_color: torch.Tensor,
-                 grad_sdf: torch.Tensor = None):
+                 grad_sdf: torch.Tensor = None,
+                 grad_texcoord: torch.Tensor = None):
         if not ctx.needs_input_grad[0] and not ctx.needs_input_grad[2] and not ctx.needs_input_grad[3]:
             return None, None, None, None, None, None, None, None, None
         
@@ -208,7 +210,7 @@ class _stroke_fn(Function):
             grad_x = grad_x.reshape(*pre_shape, 3)
         else:
             grad_x = None
-        return grad_x, None, grad_shape_params, grad_color_params, None, None, None, None, None
+        return grad_x, None, grad_shape_params, grad_color_params, None, None, None, None, None, None
 
 
 def get_stroke(shape_type: str, color_type: str, init_type: str):

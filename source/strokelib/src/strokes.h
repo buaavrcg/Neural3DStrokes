@@ -6,6 +6,7 @@
 // alpha_output: [N_Points, N_Strokes], float
 // color_output: [N_Points, N_Strokes, D_Color], float
 // sdf_output: [N_Points, N_Strokes], float
+// texcoord_output: [N_Points, N_Strokes, 3], float
 // x: [N_Points, 3], float
 // viewdir: [N_Points, 3], float
 // shape_params: [N_Strokes, N_ShapeParams], float
@@ -13,6 +14,7 @@
 void stroke_forward(at::Tensor alpha_output,
                     at::Tensor color_output,
                     at::Tensor sdf_output,
+                    at::Tensor texcoord_output,
                     const at::Tensor x,
                     const at::Tensor viewdir,
                     const at::Tensor shape_params,
