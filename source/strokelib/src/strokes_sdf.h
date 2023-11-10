@@ -15,9 +15,10 @@ enum BaseSDFType
     UNIT_LINE = 5,
     UNIT_TRIPRISM = 6,
     UNIT_OCTAHEDRON = 7,
-    QUADRATIC_BEZIER = 8,
-    CUBIC_BEZIER = 9,
-    CATMULL_ROM = 10,
+    UNIT_TETRAHEDRON = 8,
+    QUADRATIC_BEZIER = 9,
+    CUBIC_BEZIER = 10,
+    CATMULL_ROM = 11,
     NB_BASE_SDFS,
 };
 
@@ -550,6 +551,44 @@ struct BaseSDF<UNIT_OCTAHEDRON>
         return make_float2(u, v);
     }
 };
+
+
+template <>
+struct BaseSDF<UNIT_TETRAHEDRON>
+{
+    __device__ static float sdf(float3 pos, const float *params)
+    {
+        return (max(fabsf(pos.x + pos.y) - pos.z, fabsf(pos.x - pos.y) + pos.z) - 1.0f) * 0.57735027f;
+    }
+
+    __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
+    {
+        float a = pos.x + pos.y;
+        float c = pos.x - pos.y;
+
+        float grad_x, grad_y, grad_z;
+        if (fabsf(a) - pos.z > fabsf(c) + pos.z) {
+            grad_x = a < 0.0f ? -0.57735027f : 0.57735027f;
+            grad_y = a < 0.0f ? -0.57735027f : 0.57735027f;
+            grad_z = -0.57735027f;
+        } else {
+            grad_x = c < 0.0f ? -0.57735027f : 0.57735027f;
+            grad_y = c < 0.0f ? 0.57735027f : -0.57735027f;
+            grad_z = 0.57735027f;
+        }
+
+        return make_float3(grad_x, grad_y, grad_z);
+    }
+
+    __device__ static float2 texcoord(float3 pos, const float *params)
+    {
+        float3 d = normalize(pos);
+        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
+        float v = asinf(d.y) / PI;
+        return make_float2(u, v);
+    }
+};
+
 
 /////////////////////////////////////////////////////////////////////
 // Base Signed Distance Fields - Curves

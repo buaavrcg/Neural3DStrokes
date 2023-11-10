@@ -545,6 +545,7 @@ class StrokeField(nn.Module):
     warp_fn = None  # The warp function used to warp the input coordinates.
     min_update_interval: int = 2  # The minimum number of stroke steps to add new strokes.
     min_reset_interval: int = 50  # The minimum number of training steps to reset old strokes.
+    max_reset_frac: float = 0.95  # The maximum fraction of training to reset old strokes.
     error_point_samples: int = 30000  # The number of samples to sample the error field.
     step_power: float = 0.5
 
@@ -594,8 +595,8 @@ class StrokeField(nn.Module):
         reset_indices = torch.nonzero(self.density_params[:prev_step] < 0.01).squeeze(1)
         num_resets = reset_indices.numel()
         # Update the stroke field if conditions are met
-        if next_step - prev_step >= self.min_update_interval or \
-            (num_resets > 0 and cur_step - self.last_update_step >= self.min_reset_interval):
+        if next_step - prev_step >= self.min_update_interval or (num_resets > 0 and 
+            cur_step - self.last_update_step >= self.min_reset_interval and train_frac < self.max_reset_frac):
             print(f'Update stroke field {prev_step} -> {next_step} ({self.max_num_strokes} total)'
                   f', reset {num_resets} strokes')
 

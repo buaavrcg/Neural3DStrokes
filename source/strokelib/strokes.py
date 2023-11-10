@@ -18,9 +18,10 @@ _base_sdf_id = {
     'unit_line': 5,
     'unit_triprism': 6,
     'unit_octahedron': 7,
-    'quadratic_bezier': 8,
-    'cubic_bezier': 9,
-    'catmull_rom': 10,
+    'unit_tetrahedron': 8,
+    'quadratic_bezier': 9,
+    'cubic_bezier': 10,
+    'catmull_rom': 11,
 }
 
 def _make_spline_init_fn(num_control_points, num_radius):
@@ -48,14 +49,15 @@ _sdf_dict = {
     ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))),
                            (0, None)], lambda _: torch.rand(2), True, True, True, False),
     'capsule':
-    ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1) + 0.5, True, True, True, False),
+    ('unit_capsule', [(0.25, None)], lambda _: torch.rand(1) + 0.25, True, True, True, False),
     'scapsule':
-    ('unit_capsule', [(0.5, None)], lambda _: torch.rand(1) + 0.5, True, True, False, True),
+    ('unit_capsule', [(0.25, None)], lambda _: torch.rand(1) + 0.25, True, True, False, True),
     'line': ('unit_line', [
-        (0.5, None), (0, 1)
-    ], lambda _: torch.cat([torch.rand(1) * 2.0 + 0.5, torch.rand(1)]), True, True, True, False),
+        (0.25, None), (-0.8, 0.8)
+    ], lambda _: torch.cat([torch.rand(1) + 0.25, torch.rand(1) - 0.5]), True, True, True, False),
     'triprism': ('unit_triprism', [(0, None)], lambda _: torch.rand(1), True, True, True, False),
     'octahedron': ('unit_octahedron', [], None, True, True, True, False),
+    'tetrahedron': ('unit_tetrahedron', [], None, True, True, True, False),
     'quadratic_bezier':
     ('quadratic_bezier', [(-1, 1), (-1, 1), (-1, 1), 
                           (-1, 1), (-1, 1), (-1, 1), 
@@ -248,8 +250,8 @@ def get_stroke(shape_type: str, color_type: str, init_type: str):
             trans_max = torch.tensor([0.5, 0.5, 0.5])
             trans_range = torch.abs(trans_max - trans_min)
             scale_range = torch.square(trans_range).sum().sqrt()
-            scale_min = 0.02 + 0.13 * decay_t
-            scale_max = 0.04 + 0.21 * decay_t
+            scale_min = 0.02 + 0.12 * decay_t
+            scale_max = 0.04 + 0.20 * decay_t
             scale_min = scale_min * scale_range
             scale_max = scale_max * scale_range
             
