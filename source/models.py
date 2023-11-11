@@ -13,6 +13,7 @@ from source.utils import render
 from source.utils import training as train_utils
 from source.gridencoder import GridEncoder
 from source.strokelib import get_stroke, compose_strokes
+from source.textures import get_stroke_texture
 
 
 def _warp_coords(warp_fn, coords, bbox_size=2.0, no_warp=False):
@@ -565,6 +566,7 @@ class StrokeField(nn.Module):
                                            not config.fix_density_params)
         self.register_buffer('stroke_step', torch.tensor(0, dtype=torch.int32))
         self.register_buffer('shape_params_grad', torch.zeros(self.max_num_strokes, self.d_shape))
+        self.stroke_texture = get_stroke_texture(config)
         self.stroke_step_limit = None
         self.last_update_step = 0
 
@@ -673,7 +675,7 @@ class StrokeField(nn.Module):
             sdf_delta = self.sdf_delta_eval
         alphas, colors, sdfs, texcoords = self.stroke_fn(
             coords, viewdirs, shape_params, color_params, sdf_delta, 
-            self.use_laplace_transform, True, False)
+            self.use_laplace_transform, True, self.stroke_texture is not None)
 
         # Compute the fixed step strokes.
         if fixed_step > 0:
@@ -682,8 +684,8 @@ class StrokeField(nn.Module):
                 color_params_fixed = self.color_params[:fixed_step].detach()
                 density_params_fixed = self.density_params[:fixed_step].detach() * self.density_scale
                 alphas_fixed, colors_fixed, sdfs_fixed, texcoords_fixed = self.stroke_fn(
-                    coords, viewdirs, shape_params_fixed, color_params_fixed, 
-                    sdf_delta, self.use_laplace_transform, False)
+                    coords, viewdirs, shape_params_fixed, color_params_fixed, sdf_delta,
+                    self.use_laplace_transform, True, self.stroke_texture is not None)
             alphas = torch.cat([alphas_fixed, alphas], dim=-1)
             colors = torch.cat([colors_fixed, colors], dim=-2)
             if sdfs is not None:
@@ -691,6 +693,10 @@ class StrokeField(nn.Module):
             if texcoords is not None:
                 texcoords = torch.cat([texcoords_fixed, texcoords], dim=-2)
             density_params = torch.cat([density_params_fixed, density_params], dim=-1)
+            
+        # Apply texture modulation to colors and alphas.
+        if self.stroke_texture is not None:
+            colors, alphas = self.stroke_texture(texcoords, colors, alphas)
 
         # Composite strokes to get the final density and color.
         density, color = compose_strokes(alphas, colors, density_params, self.composition_type)

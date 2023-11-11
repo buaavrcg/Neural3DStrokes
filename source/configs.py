@@ -44,7 +44,7 @@ class Config:
 
     # Common configs
     exp_name : str = 'test'  # Experiment name
-    render_chunk_size: int = 16384  # Chunk size for whole-image renderings.
+    render_chunk_size: int = 8192  # Chunk size for whole-image renderings.
     vis_num_rays: int = 16  # The number of rays to visualize.
     vis_decimate: int = 0  # Decimate images for tensorboard (ie, x[::d, ::d]) to conserve memory usage.
 
@@ -124,7 +124,7 @@ class Config:
     render_progressive_strokes: bool = False  # If True, render strokes progressively.
     render_progressive_sample_multipler: float = 12.  # Multiplier for the number of samples.
     render_progressive_render_chunk_size_divisor: int = 16  # Divisor for render chunk size.
-    render_factor: int = -1  # The downsample factor of rendered images, -1 for not used.
+    render_factor: int = 1  # The downsample factor of rendered images, -1 for not used.
     render_video_fps: int = 30  # Framerate in frames-per-second.
     render_video_crf: int = 18  # Constant rate factor for ffmpeg video quality.
     render_path_frames: int = 120  # Number of frames in render path.
@@ -143,6 +143,11 @@ class Config:
     render_spline_degree: int = 5  # Polynomial degree of B-spline interpolation.
     render_spline_smoothness: float = .03  # B-spline smoothing factor, 0 for exact interpolation of keyframes.
     render_spline_interpolate_exposure: bool = False  # Interpolate per-frame exposure value from spline keyframes.
+    
+    # Texture render configs
+    stroke_texture: str = 'mask'  # The texture type to use, one of ['none', 'mask'].
+    texture_image_size: tuple[int, int] = (256, 256)  # The resolution of the stroke texture.
+    texture_image_path: str = 'brushes/brush_texture2.png'  # The path to the stroke texture image.
 
 
 def load_config(rank: int, world_size: int) -> Config:

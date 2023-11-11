@@ -44,7 +44,7 @@ _sdf_dict = {
     'cube': ('unit_cube', [], None, True, True, True, False),
     'aabb': ('unit_cube', [], None, True, False, False, True),
     'obb': ('unit_cube', [], None, True, True, False, True),
-    'roundcube': ('unit_round_cube', [(0, 1)], lambda _: torch.rand(1), True, True, True, False),
+    'roundcube': ('unit_round_cube', [(0, 1)], lambda _: 0.8 * torch.rand(1), True, True, True, False),
     'cappedtorus':
     ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))),
                            (0, None)], lambda _: torch.rand(2), True, True, True, False),
@@ -153,7 +153,7 @@ class _stroke_fn(Function):
         alpha_shape = (x.shape[0], num_strokes)
         color_shape = (x.shape[0], num_strokes, _color_dim[color_id])
         sdf_shape = (x.shape[0], num_strokes)
-        texcoord_shape = (x.shape[0], num_strokes, 3)
+        texcoord_shape = (x.shape[0], num_strokes, 2)
         alpha_output = torch.empty(alpha_shape, dtype=x.dtype, device=x.device)
         color_output = torch.empty(color_shape, dtype=x.dtype, device=x.device)
         sdf_output = torch.empty(0 if no_sdf else sdf_shape, dtype=x.dtype, device=x.device)
@@ -171,7 +171,7 @@ class _stroke_fn(Function):
         alpha_output = alpha_output.reshape(*pre_shape, num_strokes)
         color_output = color_output.reshape(*pre_shape, num_strokes, -1)
         sdf_output = None if no_sdf else sdf_output.reshape(*pre_shape, num_strokes)
-        texcoord_output = texcoord_output.reshape(*pre_shape, num_strokes, 3) if return_texcoord else None
+        texcoord_output = texcoord_output.reshape(*pre_shape, num_strokes, 2) if return_texcoord else None
         return alpha_output, color_output, sdf_output, texcoord_output
 
     @staticmethod
@@ -251,7 +251,7 @@ def get_stroke(shape_type: str, color_type: str, init_type: str):
             trans_range = torch.abs(trans_max - trans_min)
             scale_range = torch.square(trans_range).sum().sqrt()
             scale_min = 0.02 + 0.12 * decay_t
-            scale_max = 0.04 + 0.20 * decay_t
+            scale_max = 0.04 + 0.18 * decay_t
             scale_min = scale_min * scale_range
             scale_max = scale_max * scale_range
             

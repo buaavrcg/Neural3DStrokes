@@ -208,6 +208,19 @@ __device__ inline float3 inverse_transform_direction(float3 dir, const float *&s
     return dir;
 }
 
+template <int num_base_params>
+__device__ inline float3 permute_multiscale_axis(float3 d, const float *shape_params)
+{
+    float3 scale = *(const float3 *)(shape_params + num_base_params);
+    return (scale.x > scale.y ?
+                scale.y > scale.z ? make_float3(d.x, d.y, d.z)
+                                  : scale.x > scale.z ? make_float3(d.x, d.z, d.y)
+                                                      : make_float3(d.z, d.x, d.y)
+              : scale.z > scale.y ? make_float3(d.z, d.y, d.x)
+                                  : scale.x > scale.z ? make_float3(d.y, d.x, d.z)
+                                                      : make_float3(d.y, d.z, d.x));
+}
+
 /////////////////////////////////////////////////////////////////////
 // Base Signed Distance Fields - Primitives
 /////////////////////////////////////////////////////////////////////
@@ -221,6 +234,7 @@ struct BaseSDF
     // Note: use atomic operation on grad_params
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params);
     // Returns the surface texture coordinate (u,v) for the given pos and shape params.
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params);
 };
 
@@ -240,11 +254,14 @@ struct BaseSDF<UNIT_SPHERE>
         return pos * inv_norm;
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
         float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
+        if constexpr (enable_multiscale)
+            d = permute_multiscale_axis<0>(d, params);
+        float u = asinf(clamp(d.x, -1.0f, 1.0f)) / PI + 0.5f;
+        float v = atan2f(d.z, d.y) / (2.0f * PI) + 0.5f;
         return make_float2(u, v);
     }
 };
@@ -267,11 +284,14 @@ struct BaseSDF<UNIT_CUBE>
         return make_float3(grad_x, grad_y, grad_z);
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
+        float3 uvt = pos * 0.5f + 0.5f;
+        if constexpr (enable_multiscale)
+            uvt = permute_multiscale_axis<0>(uvt, params);
+        float u = clamp(uvt.x, 0.0f, 1.0f);
+        float v = clamp(uvt.y, 0.0f, 1.0f);
         return make_float2(u, v);
     }
 };
@@ -320,11 +340,14 @@ struct BaseSDF<UNIT_ROUND_CUBE>
         return make_float3(grad_x, grad_y, grad_z);
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
+        float3 uvt = pos * 0.5f + 0.5f;
+        if constexpr (enable_multiscale)
+            uvt = permute_multiscale_axis<0>(uvt, params);
+        float u = clamp(uvt.x, 0.0f, 1.0f);
+        float v = clamp(uvt.y, 0.0f, 1.0f);
         return make_float2(u, v);
     }
 };
@@ -381,12 +404,10 @@ struct BaseSDF<UNIT_CAPPED_TORUS>
         return make_float3(grad_x, grad_y, grad_z);
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
-        return make_float2(u, v);
+        return make_float2(0.0f, 0.0f);
     }
 };
 
@@ -415,11 +436,17 @@ struct BaseSDF<UNIT_CAPSULE>
         return grad_pos;
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
+        float h = params[0];
+        float u = clamp((pos.y / (h + 1.0f)) * 0.5f + 0.5f, 0.0f, 1.0f);
+        if constexpr (enable_multiscale) {
+            float3 scale = *(const float3 *)(params + 1);
+            if (scale.z > scale.x)  // swap x and z if scale_z > scale_x
+                pos = make_float3(pos.z, pos.y, pos.x);
+        }
+        float v = atan2f(pos.z, pos.x) / (2.0f * PI) + 0.5f;
         return make_float2(u, v);
     }
 };
@@ -463,11 +490,18 @@ struct BaseSDF<UNIT_LINE>
         return grad_pos;
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
+        float h = params[0];
+        float r_diff = params[1];
+        float u = clamp((pos.y + h + 1.0f - r_diff) / (2.0f * h + 2.0f), 0.0f, 1.0f);
+        if constexpr (enable_multiscale) {
+            float3 scale = *(const float3 *)(params + 1);
+            if (scale.z > scale.x)  // swap x and z if scale_z > scale_x
+                pos = make_float3(pos.z, pos.y, pos.x);
+        }
+        float v = atan2f(pos.z, pos.x) / (2.0f * PI) + 0.5f;
         return make_float2(u, v);
     }
 };
@@ -516,12 +550,10 @@ struct BaseSDF<UNIT_TRIPRISM>
         return make_float3(grad_x, grad_y, grad_z);
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
-        return make_float2(u, v);
+        return make_float2(0.0f, 0.0f);
     }
 };
 
@@ -543,12 +575,10 @@ struct BaseSDF<UNIT_OCTAHEDRON>
         return make_float3(grad_x, grad_y, grad_z);
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
-        return make_float2(u, v);
+        return make_float2(0.0f, 0.0f);
     }
 };
 
@@ -580,12 +610,10 @@ struct BaseSDF<UNIT_TETRAHEDRON>
         return make_float3(grad_x, grad_y, grad_z);
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
-        return make_float2(u, v);
+        return make_float2(0.0f, 0.0f);
     }
 };
 
@@ -1156,12 +1184,10 @@ struct BaseSDF<QUADRATIC_BEZIER>
     }
 #endif
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
-        return make_float2(u, v);
+        return make_float2(0.0f, 0.0f);
     }
 };
 
@@ -1253,12 +1279,10 @@ struct BaseSDF<CUBIC_BEZIER>
         return -grad_v;
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
-        return make_float2(u, v);
+        return make_float2(0.0f, 0.0f);
     }
 };
 
@@ -1383,11 +1407,9 @@ struct BaseSDF<CATMULL_ROM>
         return -grad_v;
     }
 
+    template <bool enable_multiscale>
     __device__ static float2 texcoord(float3 pos, const float *params)
     {
-        float3 d = normalize(pos);
-        float u = atan2f(d.z, d.x) / (2.0f * PI) + 0.5f;
-        float v = asinf(d.y) / PI;
-        return make_float2(u, v);
+        return make_float2(0.0f, 0.0f);
     }
 };

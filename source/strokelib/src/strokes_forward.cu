@@ -84,9 +84,8 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
     }
 
     if (texcoord_output) {
-        texcoord_output += idx_thread * 3;
-        *((float2*)texcoord_output) = BaseSDF<sdf_type>::texcoord(pos, shape_params);
-        texcoord_output[2] = sigmoid(sdf_value);
+        float2 uv = BaseSDF<sdf_type>::texcoord<enable_multiscale>(pos, shape_params);
+        *(float2 *)(texcoord_output + idx_thread * 2) = uv;
     }
 }
 
