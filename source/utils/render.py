@@ -1,19 +1,20 @@
 import torch
-import torch.nn.functional as F
 from . import stepfun
 
 
-def cast_rays(tdist, origins, directions):
+def cast_rays(tdist, origins, directions, radii):
     """Cast rays (cone- or cylinder-shaped) and featurize sections of it.
 
     Args:
         tdist: float array, the "fencepost" distances along the ray.
         origins: float array, the ray origin coordinates.
         directions: float array, the ray direction vectors.
+        radii: float array, the radii (base radii for cones) of the rays.
 
     Returns:
         a tuple of arrays of means and covariances:
             coords: [batch_size, H, W, n_samples, 3], the sample coordinates.
+            radius: [batch_size, H, W, n_samples], the sample radii.
             t: [batch_size, H, W, n_samples], the ray distances.
     """
     t0 = tdist[..., :-1]
@@ -21,7 +22,8 @@ def cast_rays(tdist, origins, directions):
     t = (t0 + t1) / 2
     coords = directions[..., None, :] * t[..., None]
     coords = coords + origins[..., None, :]
-    return coords, t
+    radius = radii * t
+    return coords, radius, t
 
 
 def compute_alpha_weights(density, tdist, dirs, opaque_background=False):

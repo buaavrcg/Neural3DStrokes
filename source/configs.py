@@ -145,7 +145,7 @@ class Config:
     render_spline_interpolate_exposure: bool = False  # Interpolate per-frame exposure value from spline keyframes.
     
     # Texture render configs
-    stroke_texture: str = 'mask'  # The texture type to use, one of ['none', 'mask'].
+    stroke_texture: str = 'none'  # The texture type to use, one of ['none', 'mask'].
     texture_image_size: tuple[int, int] = (256, 256)  # The resolution of the stroke texture.
     texture_image_path: str = 'brushes/brush_texture2.png'  # The path to the stroke texture image.
 

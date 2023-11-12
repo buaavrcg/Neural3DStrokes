@@ -110,6 +110,7 @@ class _stroke_fn(Function):
     @custom_fwd
     def forward(ctx,
                 x: torch.Tensor,
+                radius: torch.Tensor,
                 viewdir: torch.Tensor,
                 shape_params: torch.Tensor,
                 color_params: torch.Tensor,
@@ -117,6 +118,7 @@ class _stroke_fn(Function):
                 color_id: int,
                 sdf_delta: float,
                 use_laplace_transform: bool = False,
+                inv_scale_radius: bool = False,
                 no_sdf: bool = True,
                 return_texcoord: bool = False):
         """Compute the SDF value and the base coordinates of a batch of strokes.
@@ -124,6 +126,7 @@ class _stroke_fn(Function):
         Args:
             ctx: Function context.
             x (torch.Tensor): Sample coordinates of shape [..., num_samples, 3].
+            radius (torch.Tensor): Sample radius of shape [..., num_samples].
             viewdir (torch.Tensor): View direction of shape [..., 3].
             shape_params (torch.Tensor): Shape parameters of shape [num_strokes, num_params].
             color_params (torch.Tensor): Color parameters of shape [num_strokes, num_params].
@@ -131,6 +134,7 @@ class _stroke_fn(Function):
             color_id (int): Id of the color function to use.
             sdf_delta (float): Delta value for the clamping signed distance function.
             use_laplace_transform (bool): Use sigmoid clamping or linear clamping?
+            inv_scale_radius (bool): Inverse scale radius according to scaling transform?
             return_texcoord (bool): Return 3d texture coordinates (u,v,t) for color?
             no_sdf (bool): Return None for raw sdf values?
             
@@ -145,6 +149,7 @@ class _stroke_fn(Function):
         assert shape_params.shape[0] == color_params.shape[0], 'num_strokes must be the same'
         pre_shape = x.shape[:-1]
         x = x.contiguous().reshape(-1, 3).float()
+        radius = radius.contiguous().reshape(-1).float()
         viewdir = viewdir.contiguous().reshape(-1, 3).float()
         shape_params = shape_params.contiguous().float()
         color_params = color_params.contiguous().float()
@@ -158,14 +163,16 @@ class _stroke_fn(Function):
         color_output = torch.empty(color_shape, dtype=x.dtype, device=x.device)
         sdf_output = torch.empty(0 if no_sdf else sdf_shape, dtype=x.dtype, device=x.device)
         texcoord_output = torch.empty(0 if not return_texcoord else texcoord_shape, dtype=x.dtype, device=x.device)
-        _backend.stroke_forward(alpha_output, color_output, sdf_output, texcoord_output, x, viewdir, shape_params,
-                                color_params, sdf_id, color_id, sdf_delta, use_laplace_transform)
+        _backend.stroke_forward(alpha_output, color_output, sdf_output, texcoord_output, x, radius, 
+                                viewdir, shape_params, color_params, sdf_id, color_id, sdf_delta, 
+                                use_laplace_transform, inv_scale_radius)
         if ctx.needs_input_grad[0] or ctx.needs_input_grad[2] or ctx.needs_input_grad[3]:
-            ctx.save_for_backward(x, viewdir, alpha_output, shape_params, color_params)
+            ctx.save_for_backward(x, radius, viewdir, alpha_output, shape_params, color_params)
             ctx.sdf_id = sdf_id
             ctx.color_id = color_id
             ctx.sdf_delta = sdf_delta
             ctx.use_laplace_transform = use_laplace_transform
+            ctx.inv_scale_radius = inv_scale_radius
             ctx.pre_shape = pre_shape
 
         alpha_output = alpha_output.reshape(*pre_shape, num_strokes)
@@ -185,12 +192,13 @@ class _stroke_fn(Function):
         if not ctx.needs_input_grad[0] and not ctx.needs_input_grad[2] and not ctx.needs_input_grad[3]:
             return None, None, None, None, None, None, None, None, None
         
-        x, viewdir, alpha_output, shape_params, color_params = ctx.saved_tensors
+        x, radius, viewdir, alpha_output, shape_params, color_params = ctx.saved_tensors
         num_strokes = shape_params.shape[0]
         sdf_id = ctx.sdf_id
         color_id = ctx.color_id
         sdf_delta = ctx.sdf_delta
         use_laplace_transform = ctx.use_laplace_transform
+        inv_scale_radius = ctx.inv_scale_radius
         pre_shape = ctx.pre_shape
 
         grad_alpha = grad_alpha.contiguous().float().reshape(-1, num_strokes)
@@ -205,14 +213,14 @@ class _stroke_fn(Function):
         grad_x = torch.zeros(x.shape if ctx.needs_input_grad[0] else 0,
                              dtype=x.dtype,
                              device=x.device)
-        _backend.stroke_backward(grad_shape_params, grad_color_params, grad_x, grad_alpha,
-                                 grad_color, grad_sdf, x, viewdir, alpha_output, shape_params,
-                                 color_params, sdf_id, color_id, sdf_delta, use_laplace_transform)
+        _backend.stroke_backward(grad_shape_params, grad_color_params, grad_x, grad_alpha, grad_color, 
+                                 grad_sdf, x, radius, viewdir, alpha_output, shape_params, color_params, 
+                                 sdf_id, color_id, sdf_delta, use_laplace_transform, inv_scale_radius)
         if ctx.needs_input_grad[0]:
             grad_x = grad_x.reshape(*pre_shape, 3)
         else:
             grad_x = None
-        return grad_x, None, grad_shape_params, grad_color_params, None, None, None, None, None, None
+        return grad_x, None, None, grad_shape_params, grad_color_params, None, None, None, None, None, None, None
 
 
 def get_stroke(shape_type: str, color_type: str, init_type: str):
@@ -297,8 +305,8 @@ def get_stroke(shape_type: str, color_type: str, init_type: str):
         else:
             return torch.empty(0)
 
-    stroke_fn = lambda x, viewdir, shape_params, color_params, *args: _stroke_fn.apply(
-        x, viewdir, shape_params, color_params, sdf_id, color_id, *args)
+    stroke_fn = lambda x, radius, viewdir, shape_params, color_params, *args: \
+        _stroke_fn.apply(x, radius, viewdir, shape_params, color_params, sdf_id, color_id, *args)
     dim_shape = len(shape_param_ranges)
     dim_color = len(color_param_ranges)
     return stroke_fn, dim_shape, dim_color, shape_param_ranges, color_param_ranges, shape_sampler, color_sampler

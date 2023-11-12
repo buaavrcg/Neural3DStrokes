@@ -19,6 +19,7 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
                                       float *__restrict__ sdf_output,
                                       float *__restrict__ texcoord_output,
                                       const float *__restrict__ x,
+                                      const float *__restrict__ radius,
                                       const float *__restrict__ viewdir,
                                       const float *__restrict__ shape_params,
                                       const float *__restrict__ color_params,
@@ -28,7 +29,8 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
                                       const int64_t n_shape_params,
                                       const int64_t n_color_params,
                                       const float sdf_delta,
-                                      const bool use_laplace_transform)
+                                      const bool use_laplace_transform,
+                                      const bool inv_scale_radius)
 {
     const uint32_t idx_thread = threadIdx.x + blockIdx.x * blockDim.x;
     const uint32_t idx_point = idx_thread / n_strokes;
@@ -42,6 +44,7 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
     color_params += idx_stroke * n_color_params;
 
     float3 pos = ((const float3 *)x)[idx_point];
+    float  radii = radius[idx_point];
     float3 dir = ColorField<color_type>::use_viewdir ? ((const float3 *)viewdir)[idx_point / n_samples_per_ray]
                                                      : make_float3(0.0f);
     if constexpr (!ColorField<color_type>::use_unit_pos)
@@ -62,8 +65,24 @@ __global__ void stroke_forward_kernel(float *__restrict__ alpha_output,
     if (sdf_output)
         sdf_output[idx_thread] = sdf_value;
 
+    // scale radii if singlescale or multiscale is enabled
+    if (inv_scale_radius) {
+        if constexpr (enable_singlescale) {
+            float scale = sp_reverse[0];
+            radii /= scale;
+        } else if constexpr (enable_multiscale) {
+            // For multiscale transform, we need to find the direction of sdf gradient
+            // and compute the scale factor from this gradient direction
+            float3 sdf_grad = BaseSDF<sdf_type>::grad_sdf(nullptr, 0.0f, pos, shape_params);
+            // Compute the scale factor from the gradient direction
+            float3 scale = *(const float3 *)(sp_reverse);
+            float3 sdf_grad_scaled = sdf_grad * scale;
+            radii /= (length(sdf_grad_scaled) / length(sdf_grad));
+        }
+    }
+
     // Transform the SDF to compute the blending weight alpha
-    const float sdf_scale = (use_laplace_transform ? 2.0f : 0.5f) / sdf_delta;
+    const float sdf_scale = (use_laplace_transform ? 2.0f : 0.5f) / (sdf_delta * radii);
     float alpha = sdf_delta > 0.0f ? (use_laplace_transform
                                           ? laplace_cdf(-sdf_value * sdf_scale)
                                           : clamp(-sdf_value * sdf_scale + 0.5f, 0.0f, 0.9999f))
@@ -95,6 +114,7 @@ void stroke_forward_warpper(float *alpha_output,
                             float *sdf_output,
                             float *texcoord_output,
                             const float *x,
+                            const float *radius,
                             const float *viewdir,
                             const float *shape_params,
                             const float *color_params,
@@ -104,7 +124,8 @@ void stroke_forward_warpper(float *alpha_output,
                             const int64_t n_shape_params,
                             const int64_t n_color_params,
                             const float sdf_delta,
-                            const bool use_laplace_transform)
+                            const bool use_laplace_transform,
+                            const bool inv_scale_radius)
 {
     constexpr uint32_t sdf_id = id / NB_COLORS;
     constexpr uint32_t color_id = id % NB_COLORS;
@@ -131,6 +152,7 @@ void stroke_forward_warpper(float *alpha_output,
             sdf_output,
             texcoord_output,
             x,
+            radius,
             viewdir,
             shape_params,
             color_params,
@@ -140,7 +162,8 @@ void stroke_forward_warpper(float *alpha_output,
             n_shape_params,
             n_color_params,
             sdf_delta,
-            use_laplace_transform);
+            use_laplace_transform,
+            inv_scale_radius);
 }
 
 DECLARE_INT_TEMPLATE_ARG_LUT(stroke_forward_warpper)
@@ -149,19 +172,22 @@ void stroke_forward(at::Tensor alpha_output,
                     at::Tensor sdf_output,
                     at::Tensor texcoord_output,
                     const at::Tensor x,
+                    const at::Tensor radius,
                     const at::Tensor viewdir,
                     const at::Tensor shape_params,
                     const at::Tensor color_params,
                     const uint32_t sdf_id,
                     const uint32_t color_id,
                     const float sdf_delta,
-                    const bool use_laplace_transform)
+                    const bool use_laplace_transform,
+                    const bool inv_scale_radius)
 {
     CHECK_FLOAT_INPUT(alpha_output);
     CHECK_FLOAT_INPUT(color_output);
     CHECK_FLOAT_INPUT(sdf_output);
     CHECK_FLOAT_INPUT(texcoord_output);
     CHECK_FLOAT_INPUT(x);
+    CHECK_FLOAT_INPUT(radius);
     CHECK_FLOAT_INPUT(viewdir);
     CHECK_FLOAT_INPUT(shape_params);
     CHECK_FLOAT_INPUT(color_params);
@@ -184,6 +210,7 @@ void stroke_forward(at::Tensor alpha_output,
         sdf_output.numel() ? sdf_output.data_ptr<float>() : nullptr,
         texcoord_output.numel() ? texcoord_output.data_ptr<float>() : nullptr,
         x.data_ptr<float>(),
+        radius.data_ptr<float>(),
         viewdir.data_ptr<float>(),
         shape_params.data_ptr<float>(),
         color_params.data_ptr<float>(),
@@ -193,5 +220,6 @@ void stroke_forward(at::Tensor alpha_output,
         n_shape_params,
         n_color_params,
         sdf_delta,
-        use_laplace_transform);
+        use_laplace_transform,
+        inv_scale_radius);
 }

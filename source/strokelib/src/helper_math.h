@@ -1310,6 +1310,18 @@ inline __host__ __device__ float length(float4 v)
 {
     return sqrtf(dot(v, v));
 }
+inline __host__ __device__ float safe_length(float2 v)
+{
+    return sqrtf(dot(v, v) + 1e-8f);
+}
+inline __host__ __device__ float safe_length(float3 v)
+{
+    return sqrtf(dot(v, v) + 1e-8f);
+}
+inline __host__ __device__ float safe_length(float4 v)
+{
+    return sqrtf(dot(v, v) + 1e-8f);
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // normalize

@@ -1,4 +1,4 @@
-Config.exp_name = 'lego_26_catmull_rom'
+Config.exp_name = 'lego_36_line_radiitest'
 Config.dataset_loader = 'blender'
 Config.data_dir = 'data/nerf_synthetic/lego'
 Config.near = 2
@@ -32,14 +32,14 @@ Model.num_nerf_samples = 32
 
 StrokeField.bbox_size = 3.0
 StrokeField.warp_fn = None
-StrokeField.shape_type = 'catmull_rom'
+StrokeField.shape_type = 'line'
 StrokeField.color_type = 'constant_rgb'
 StrokeField.use_laplace_transform = True
 StrokeField.max_num_strokes = 500
 StrokeField.max_opt_strokes = 500
 StrokeField.init_num_strokes = 20
-StrokeField.sdf_delta = 0.015
-StrokeField.sdf_delta_eval = 0.005
+StrokeField.sdf_delta = 6.0
+StrokeField.sdf_delta_eval = 1.0
 # StrokeField.composition_type = 'max'
 
 MLP.bbox_size = 3.0

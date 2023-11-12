@@ -231,7 +231,8 @@ struct BaseSDF
     // Returns SDF value for the given pos and shape params.
     __device__ static float sdf(float3 pos, const float *params);
     // Returns dSDF/dPos and stores grad_params for given pos and shape params.
-    // Note: use atomic operation on grad_params
+    // Note: use atomic operation on grad_params, and
+    //       if grad_params is nullptr, then do not compute gradients w.r.t. params.
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params);
     // Returns the surface texture coordinate (u,v) for the given pos and shape params.
     template <bool enable_multiscale>
@@ -271,16 +272,29 @@ struct BaseSDF<UNIT_CUBE>
 {
     __device__ static float sdf(float3 pos, const float *params)
     {
-        float3 p_abs = fabs(pos);
-        return max(max(p_abs.x, p_abs.y), p_abs.z) - 1.f;
+        float3 q = fabs(pos) - 1.f;
+        return length(fmaxf(q, make_float3(0.0f))) + min(max(q.x, max(q.y, q.z)), 0.0f);
     }
 
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
     {
-        float3 p_abs = fabs(pos);
-        float grad_x = p_abs.x >= p_abs.y && p_abs.x >= p_abs.z ? (pos.x < 0.0f ? -1.0f : 1.0f) : 0.0f;
-        float grad_y = p_abs.x < p_abs.y && p_abs.y >= p_abs.z ? (pos.y < 0.0f ? -1.0f : 1.0f) : 0.0f;
-        float grad_z = p_abs.x < p_abs.z && p_abs.y < p_abs.z ? (pos.z < 0.0f ? -1.0f : 1.0f) : 0.0f;
+        float3 q = fabs(pos) - 1.f;
+
+        float grad_x, grad_y, grad_z;
+        if (max(q.x, max(q.y, q.z)) <= 0.0f) {  // inside the cube
+            grad_x = q.x >= q.y && q.x >= q.z ? (pos.x < 0.0f ? -1.0f : 1.0f) : 0.0f;
+            grad_y = q.x < q.y && q.y >= q.z ? (pos.y < 0.0f ? -1.0f : 1.0f) : 0.0f;
+            grad_z = q.x < q.z && q.y < q.z ? (pos.z < 0.0f ? -1.0f : 1.0f) : 0.0f;
+        } else {
+            float3 grad_length = 2.0f * fmaxf(q, make_float3(0.0f));
+            float3 grad_q = make_float3(q.x > 0.0f ? grad_length.x : 0.0f,
+                                        q.y > 0.0f ? grad_length.y : 0.0f,
+                                        q.z > 0.0f ? grad_length.z : 0.0f);
+            grad_x = pos.x < 0.0f ? -grad_q.x : grad_q.x;
+            grad_y = pos.y < 0.0f ? -grad_q.y : grad_q.y;
+            grad_z = pos.z < 0.0f ? -grad_q.z : grad_q.z;
+        }
+
         return make_float3(grad_x, grad_y, grad_z);
     }
 
@@ -312,7 +326,8 @@ struct BaseSDF<UNIT_ROUND_CUBE>
 
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
     {
-        atomicAdd(grad_params + 0, -grad_SDF * 1.0f);
+        if (grad_params)
+            atomicAdd(grad_params + 0, -grad_SDF * 1.0f);
 
         float3 p_abs = fabs(pos);
         float3 p_dis = p_abs - make_float3(1.0f, 1.0f, 1.0f);
@@ -384,7 +399,8 @@ struct BaseSDF<UNIT_CAPPED_TORUS>
             float grad_p_k_y = -sc.y;
             float grad_p_k_z = 0.0f;
             float3 grad_p_k = make_float3(grad_p_k_x, grad_p_k_y, grad_p_k_z);
-            atomicAdd(grad_params + 0, -grad_SDF * dot(p_xy, sc_f));
+            if (grad_params)
+                atomicAdd(grad_params + 0, -grad_SDF * dot(p_xy, sc_f));
             grad_x = (grad_p_dot.x + grad_p_k.x) * inv_norm;
             grad_y = (grad_p_dot.y + grad_p_k.y) * inv_norm;
             grad_z = (grad_p_dot.z + grad_p_k.z) * inv_norm;
@@ -400,7 +416,8 @@ struct BaseSDF<UNIT_CAPPED_TORUS>
             grad_z = (grad_p_dot.z + grad_p_k.z) * inv_norm;
         }
 
-        atomicAdd(grad_params + 1, -grad_SDF);
+        if (grad_params)
+            atomicAdd(grad_params + 1, -grad_SDF);
         return make_float3(grad_x, grad_y, grad_z);
     }
 
@@ -431,7 +448,7 @@ struct BaseSDF<UNIT_CAPSULE>
         float3 grad_pos = pos * rsqrt(p_sq.x + p_sq.y + p_sq.z + 1e-8);
         if (-h <= pos_y && pos_y <= h)
             grad_pos.y = 0.0f;
-        else
+        else if (grad_params)
             atomicAdd(grad_params + 0, grad_SDF * grad_pos.y * (pos_y > 0.f ? -1.f : 1.f));
         return grad_pos;
     }
@@ -485,8 +502,10 @@ struct BaseSDF<UNIT_LINE>
         {
             grad_param0 = grad_pos.y * (pos_y > 0.f ? -1.f : 1.f);
         }
-        atomicAdd(grad_params + 0, grad_SDF * grad_param0);
-        atomicAdd(grad_params + 1, grad_SDF * (1.f - 2.f * t));
+        if (grad_params) {
+            atomicAdd(grad_params + 0, grad_SDF * grad_param0);
+            atomicAdd(grad_params + 1, grad_SDF * (1.f - 2.f * t));
+        }
         return grad_pos;
     }
 
@@ -527,7 +546,8 @@ struct BaseSDF<UNIT_TRIPRISM>
             if (q.y - params[0] > q.x * 0.866025f + pos.z * 0.5f - 0.5f)
             {
                 grad_y = grad_q.y;
-                atomicAdd(grad_params + 0, -grad_SDF);
+                if (grad_params)
+                    atomicAdd(grad_params + 0, -grad_SDF);
             }
             else
             {
@@ -540,7 +560,8 @@ struct BaseSDF<UNIT_TRIPRISM>
             if (q.y - params[0] > -pos.z - 0.5f)
             {
                 grad_y = grad_q.y;
-                atomicAdd(grad_params + 0, -grad_SDF);
+                if (grad_params)
+                    atomicAdd(grad_params + 0, -grad_SDF);
             }
             else
             {
@@ -902,33 +923,37 @@ struct BaseSDF<QUADRATIC_BEZIER>
             res = make_float2(dot(d + (c + b * t) * t, d + (c + b * t) * t), t);
             if (t == 0.0f || t == 1.0f)
             {
-                atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_0, c, b, grad_c_p_0, grad_b_p_0, res.x));
-                atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_1, c, b, grad_c_p_1, grad_b_p_1, res.x));
-                atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_2, c, b, grad_c_p_2, grad_b_p_2, res.x));
-                atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_3, c, b, grad_c_p_3, grad_b_p_3, res.x));
-                atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_4, c, b, grad_c_p_4, grad_b_p_4, res.x));
-                atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_5, c, b, grad_c_p_5, grad_b_p_5, res.x));
-                atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_6, c, b, grad_c_p_6, grad_b_p_6, res.x));
-                atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_7, c, b, grad_c_p_7, grad_b_p_7, res.x));
-                atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_8, c, b, grad_c_p_8, grad_b_p_8, res.x));
-                atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
-                atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                if (grad_params) {
+                    atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_0, c, b, grad_c_p_0, grad_b_p_0, res.x));
+                    atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_1, c, b, grad_c_p_1, grad_b_p_1, res.x));
+                    atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_2, c, b, grad_c_p_2, grad_b_p_2, res.x));
+                    atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_3, c, b, grad_c_p_3, grad_b_p_3, res.x));
+                    atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_4, c, b, grad_c_p_4, grad_b_p_4, res.x));
+                    atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_5, c, b, grad_c_p_5, grad_b_p_5, res.x));
+                    atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_6, c, b, grad_c_p_6, grad_b_p_6, res.x));
+                    atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_7, c, b, grad_c_p_7, grad_b_p_7, res.x));
+                    atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_3(t, d, grad_d_p_8, c, b, grad_c_p_8, grad_b_p_8, res.x));
+                    atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
+                    atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                }
 
                 return grad_ans_xyz_category_3(d, res.x);
             }
             else
             {
-                atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_0, grad_q_p_0, grad_p_p_0, grad_d_p_0, grad_c_p_0, grad_b_p_0, params[9], params[10], res.x));
-                atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_1, grad_q_p_1, grad_p_p_1, grad_d_p_1, grad_c_p_1, grad_b_p_1, params[9], params[10], res.x));
-                atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_2, grad_q_p_2, grad_p_p_2, grad_d_p_2, grad_c_p_2, grad_b_p_2, params[9], params[10], res.x));
-                atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_3, grad_q_p_3, grad_p_p_3, grad_d_p_3, grad_c_p_3, grad_b_p_3, params[9], params[10], res.x));
-                atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_4, grad_q_p_4, grad_p_p_4, grad_d_p_4, grad_c_p_4, grad_b_p_4, params[9], params[10], res.x));
-                atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_5, grad_q_p_5, grad_p_p_5, grad_d_p_5, grad_c_p_5, grad_b_p_5, params[9], params[10], res.x));
-                atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_6, grad_q_p_6, grad_p_p_6, grad_d_p_6, grad_c_p_6, grad_b_p_6, params[9], params[10], res.x));
-                atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_7, grad_q_p_7, grad_p_p_7, grad_d_p_7, grad_c_p_7, grad_b_p_7, params[9], params[10], res.x));
-                atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_8, grad_q_p_8, grad_p_p_8, grad_d_p_8, grad_c_p_8, grad_b_p_8, params[9], params[10], res.x));
-                atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
-                atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                if (grad_params) {
+                    atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_0, grad_q_p_0, grad_p_p_0, grad_d_p_0, grad_c_p_0, grad_b_p_0, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_1, grad_q_p_1, grad_p_p_1, grad_d_p_1, grad_c_p_1, grad_b_p_1, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_2, grad_q_p_2, grad_p_p_2, grad_d_p_2, grad_c_p_2, grad_b_p_2, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_3, grad_q_p_3, grad_p_p_3, grad_d_p_3, grad_c_p_3, grad_b_p_3, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_4, grad_q_p_4, grad_p_p_4, grad_d_p_4, grad_c_p_4, grad_b_p_4, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_5, grad_q_p_5, grad_p_p_5, grad_d_p_5, grad_c_p_5, grad_b_p_5, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_6, grad_q_p_6, grad_p_p_6, grad_d_p_6, grad_c_p_6, grad_b_p_6, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_7, grad_q_p_7, grad_p_p_7, grad_d_p_7, grad_c_p_7, grad_b_p_7, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_1(s, b, c, d, t, x, q, p, grad_kx_p_8, grad_q_p_8, grad_p_p_8, grad_d_p_8, grad_c_p_8, grad_b_p_8, params[9], params[10], res.x));
+                    atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
+                    atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                }
 
                 return grad_ans_xyz_category_1(b, c, d, t, x, s, p, q, grad_q_xyz, grad_p_xyz, grad_d_xyz, params[9], params[10], res.x);
             }
@@ -951,33 +976,37 @@ struct BaseSDF<QUADRATIC_BEZIER>
                 res = make_float2(dis, t.y);
                 if (t.y == 0.0f || t.y == 1.0f)
                 {
-                    atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_0, c, b, grad_c_p_0, grad_b_p_0, res.x));
-                    atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_1, c, b, grad_c_p_1, grad_b_p_1, res.x));
-                    atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_2, c, b, grad_c_p_2, grad_b_p_2, res.x));
-                    atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_3, c, b, grad_c_p_3, grad_b_p_3, res.x));
-                    atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_4, c, b, grad_c_p_4, grad_b_p_4, res.x));
-                    atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_5, c, b, grad_c_p_5, grad_b_p_5, res.x));
-                    atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_6, c, b, grad_c_p_6, grad_b_p_6, res.x));
-                    atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_7, c, b, grad_c_p_7, grad_b_p_7, res.x));
-                    atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_8, c, b, grad_c_p_8, grad_b_p_8, res.x));
-                    atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
-                    atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    if (grad_params) {
+                        atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_0, c, b, grad_c_p_0, grad_b_p_0, res.x));
+                        atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_1, c, b, grad_c_p_1, grad_b_p_1, res.x));
+                        atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_2, c, b, grad_c_p_2, grad_b_p_2, res.x));
+                        atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_3, c, b, grad_c_p_3, grad_b_p_3, res.x));
+                        atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_4, c, b, grad_c_p_4, grad_b_p_4, res.x));
+                        atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_5, c, b, grad_c_p_5, grad_b_p_5, res.x));
+                        atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_6, c, b, grad_c_p_6, grad_b_p_6, res.x));
+                        atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_7, c, b, grad_c_p_7, grad_b_p_7, res.x));
+                        atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_3(t.y, d, grad_d_p_8, c, b, grad_c_p_8, grad_b_p_8, res.x));
+                        atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
+                        atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    }
 
                     return grad_ans_xyz_category_3(d, res.x);
                 }
                 else
                 {
-                    atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_0, grad_p_p_0, grad_d_p_0, grad_kx_p_0, grad_c_p_0, grad_b_p_0, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_1, grad_p_p_1, grad_d_p_1, grad_kx_p_1, grad_c_p_1, grad_b_p_1, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_2, grad_p_p_2, grad_d_p_2, grad_kx_p_2, grad_c_p_2, grad_b_p_2, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_3, grad_p_p_3, grad_d_p_3, grad_kx_p_3, grad_c_p_3, grad_b_p_3, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_4, grad_p_p_4, grad_d_p_4, grad_kx_p_4, grad_c_p_4, grad_b_p_4, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_5, grad_p_p_5, grad_d_p_5, grad_kx_p_5, grad_c_p_5, grad_b_p_5, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_6, grad_p_p_6, grad_d_p_6, grad_kx_p_6, grad_c_p_6, grad_b_p_6, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_7, grad_p_p_7, grad_d_p_7, grad_kx_p_7, grad_c_p_7, grad_b_p_7, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_8, grad_p_p_8, grad_d_p_8, grad_kx_p_8, grad_c_p_8, grad_b_p_8, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
-                    atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    if (grad_params) {
+                        atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_0, grad_p_p_0, grad_d_p_0, grad_kx_p_0, grad_c_p_0, grad_b_p_0, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_1, grad_p_p_1, grad_d_p_1, grad_kx_p_1, grad_c_p_1, grad_b_p_1, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_2, grad_p_p_2, grad_d_p_2, grad_kx_p_2, grad_c_p_2, grad_b_p_2, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_3, grad_p_p_3, grad_d_p_3, grad_kx_p_3, grad_c_p_3, grad_b_p_3, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_4, grad_p_p_4, grad_d_p_4, grad_kx_p_4, grad_c_p_4, grad_b_p_4, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_5, grad_p_p_5, grad_d_p_5, grad_kx_p_5, grad_c_p_5, grad_b_p_5, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_6, grad_p_p_6, grad_d_p_6, grad_kx_p_6, grad_c_p_6, grad_b_p_6, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_7, grad_p_p_7, grad_d_p_7, grad_kx_p_7, grad_c_p_7, grad_b_p_7, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_p_8, grad_p_p_8, grad_d_p_8, grad_kx_p_8, grad_c_p_8, grad_b_p_8, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
+                        atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    }
 
                     return grad_ans_xyz_category_2(b, c, d, t.y, z, m, n, p, v, q, grad_q_xyz, grad_p_xyz, grad_d_xyz, params[9], params[10], res.x);
                 }
@@ -986,33 +1015,37 @@ struct BaseSDF<QUADRATIC_BEZIER>
             {
                 if (t.x == 0.0f || t.x == 1.0f)
                 {
-                    atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_0, c, b, grad_c_p_0, grad_b_p_0, res.x));
-                    atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_1, c, b, grad_c_p_1, grad_b_p_1, res.x));
-                    atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_2, c, b, grad_c_p_2, grad_b_p_2, res.x));
-                    atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_3, c, b, grad_c_p_3, grad_b_p_3, res.x));
-                    atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_4, c, b, grad_c_p_4, grad_b_p_4, res.x));
-                    atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_5, c, b, grad_c_p_5, grad_b_p_5, res.x));
-                    atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_6, c, b, grad_c_p_6, grad_b_p_6, res.x));
-                    atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_7, c, b, grad_c_p_7, grad_b_p_7, res.x));
-                    atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_8, c, b, grad_c_p_8, grad_b_p_8, res.x));
-                    atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
-                    atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    if (grad_params) {
+                        atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_0, c, b, grad_c_p_0, grad_b_p_0, res.x));
+                        atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_1, c, b, grad_c_p_1, grad_b_p_1, res.x));
+                        atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_2, c, b, grad_c_p_2, grad_b_p_2, res.x));
+                        atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_3, c, b, grad_c_p_3, grad_b_p_3, res.x));
+                        atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_4, c, b, grad_c_p_4, grad_b_p_4, res.x));
+                        atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_5, c, b, grad_c_p_5, grad_b_p_5, res.x));
+                        atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_6, c, b, grad_c_p_6, grad_b_p_6, res.x));
+                        atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_7, c, b, grad_c_p_7, grad_b_p_7, res.x));
+                        atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_3(t.x, d, grad_d_p_8, c, b, grad_c_p_8, grad_b_p_8, res.x));
+                        atomicAdd(grad_params + 9, -grad_SDF * (-res.y + 1.0f));
+                        atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    }
 
                     return grad_ans_xyz_category_3(d, res.x);
                 }
                 else
                 {
-                    atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_0, grad_p_p_0, grad_d_p_0, grad_kx_p_0, grad_c_p_0, grad_b_p_0, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_1, grad_p_p_1, grad_d_p_1, grad_kx_p_1, grad_c_p_1, grad_b_p_1, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_2, grad_p_p_2, grad_d_p_2, grad_kx_p_2, grad_c_p_2, grad_b_p_2, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_3, grad_p_p_3, grad_d_p_3, grad_kx_p_3, grad_c_p_3, grad_b_p_3, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_4, grad_p_p_4, grad_d_p_4, grad_kx_p_4, grad_c_p_4, grad_b_p_4, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_5, grad_p_p_5, grad_d_p_5, grad_kx_p_5, grad_c_p_5, grad_b_p_5, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_6, grad_p_p_6, grad_d_p_6, grad_kx_p_6, grad_c_p_6, grad_b_p_6, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_7, grad_p_p_7, grad_d_p_7, grad_kx_p_7, grad_c_p_7, grad_b_p_7, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_8, grad_p_p_8, grad_d_p_8, grad_kx_p_8, grad_c_p_8, grad_b_p_8, params[9], params[10], res.x));
-                    atomicAdd(grad_params + 9, -grad_SDF * (res.y + 1.0f));
-                    atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    if (grad_params) {
+                        atomicAdd(grad_params + 0, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_0, grad_p_p_0, grad_d_p_0, grad_kx_p_0, grad_c_p_0, grad_b_p_0, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 1, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_1, grad_p_p_1, grad_d_p_1, grad_kx_p_1, grad_c_p_1, grad_b_p_1, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 2, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_2, grad_p_p_2, grad_d_p_2, grad_kx_p_2, grad_c_p_2, grad_b_p_2, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 3, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_3, grad_p_p_3, grad_d_p_3, grad_kx_p_3, grad_c_p_3, grad_b_p_3, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 4, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_4, grad_p_p_4, grad_d_p_4, grad_kx_p_4, grad_c_p_4, grad_b_p_4, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 5, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_5, grad_p_p_5, grad_d_p_5, grad_kx_p_5, grad_c_p_5, grad_b_p_5, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 6, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_6, grad_p_p_6, grad_d_p_6, grad_kx_p_6, grad_c_p_6, grad_b_p_6, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 7, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_7, grad_p_p_7, grad_d_p_7, grad_kx_p_7, grad_c_p_7, grad_b_p_7, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 8, grad_SDF * grad_ans_params_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_p_8, grad_p_p_8, grad_d_p_8, grad_kx_p_8, grad_c_p_8, grad_b_p_8, params[9], params[10], res.x));
+                        atomicAdd(grad_params + 9, -grad_SDF * (res.y + 1.0f));
+                        atomicAdd(grad_params + 10, -grad_SDF * (res.y));
+                    }
 
                     return grad_ans_xyz_category_2(b, c, d, t.x, z, m, n, p, v, q, grad_q_xyz, grad_p_xyz, grad_d_xyz, params[9], params[10], res.x);
                 }
@@ -1142,17 +1175,19 @@ struct BaseSDF<QUADRATIC_BEZIER>
     __device__ static float3 grad_sdf(float *grad_params, float grad_SDF, float3 pos, const float *params)
     {
         float delta = 1e-6f;
-        atomicAdd(grad_params + 0, grad_SDF * grad_param_i<0>(pos, params, delta));
-        atomicAdd(grad_params + 1, grad_SDF * grad_param_i<1>(pos, params, delta));
-        atomicAdd(grad_params + 2, grad_SDF * grad_param_i<2>(pos, params, delta));
-        atomicAdd(grad_params + 3, grad_SDF * grad_param_i<3>(pos, params, delta));
-        atomicAdd(grad_params + 4, grad_SDF * grad_param_i<4>(pos, params, delta));
-        atomicAdd(grad_params + 5, grad_SDF * grad_param_i<5>(pos, params, delta));
-        atomicAdd(grad_params + 6, grad_SDF * grad_param_i<6>(pos, params, delta));
-        atomicAdd(grad_params + 7, grad_SDF * grad_param_i<7>(pos, params, delta));
-        atomicAdd(grad_params + 8, grad_SDF * grad_param_i<8>(pos, params, delta));
-        atomicAdd(grad_params + 9, grad_SDF * grad_param_i<9>(pos, params, delta));
-        atomicAdd(grad_params + 10, grad_SDF * grad_param_i<10>(pos, params, delta));
+        if (grad_params) {
+            atomicAdd(grad_params + 0, grad_SDF * grad_param_i<0>(pos, params, delta));
+            atomicAdd(grad_params + 1, grad_SDF * grad_param_i<1>(pos, params, delta));
+            atomicAdd(grad_params + 2, grad_SDF * grad_param_i<2>(pos, params, delta));
+            atomicAdd(grad_params + 3, grad_SDF * grad_param_i<3>(pos, params, delta));
+            atomicAdd(grad_params + 4, grad_SDF * grad_param_i<4>(pos, params, delta));
+            atomicAdd(grad_params + 5, grad_SDF * grad_param_i<5>(pos, params, delta));
+            atomicAdd(grad_params + 6, grad_SDF * grad_param_i<6>(pos, params, delta));
+            atomicAdd(grad_params + 7, grad_SDF * grad_param_i<7>(pos, params, delta));
+            atomicAdd(grad_params + 8, grad_SDF * grad_param_i<8>(pos, params, delta));
+            atomicAdd(grad_params + 9, grad_SDF * grad_param_i<9>(pos, params, delta));
+            atomicAdd(grad_params + 10, grad_SDF * grad_param_i<10>(pos, params, delta));
+        }
         float grad_x = (sdf(pos + make_float3(delta, 0.0f, 0.0f), params) - sdf(pos - make_float3(delta, 0.0f, 0.0f), params)) / (2.0f * delta);
         float grad_y = (sdf(pos + make_float3(0.0f, delta, 0.0f), params) - sdf(pos - make_float3(0.0f, delta, 0.0f), params)) / (2.0f * delta);
         float grad_z = (sdf(pos + make_float3(0.0f, 0.0f, delta), params) - sdf(pos - make_float3(0.0f, 0.0f, delta), params)) / (2.0f * delta);
@@ -1261,20 +1296,23 @@ struct BaseSDF<CUBIC_BEZIER>
         float3 P = point_cubic_bezier(t, A, B, C, D);
         float3 v = P - pos;
         float3 grad_v = grad_SDF * 2.0f * v;
-        float3 grad_P = grad_v;
-        float3 grad_A = grad_P * (u * u * u);
-        float3 grad_B = grad_P * (3.0f * u * u * t);
-        float3 grad_C = grad_P * (3.0f * u * t * t);
-        float3 grad_D = grad_P * (t * t * t);
-        float grad_r1 = -grad_SDF * u;
-        float grad_r2 = -grad_SDF * t;
 
-        atomicAdd3(grad_params + 0, grad_A);
-        atomicAdd3(grad_params + 3, grad_B);
-        atomicAdd3(grad_params + 6, grad_C);
-        atomicAdd3(grad_params + 9, grad_D);
-        atomicAdd(grad_params + 12, grad_r1);
-        atomicAdd(grad_params + 13, grad_r2);
+        if (grad_params) {
+            float3 grad_P = grad_v;
+            float3 grad_A = grad_P * (u * u * u);
+            float3 grad_B = grad_P * (3.0f * u * u * t);
+            float3 grad_C = grad_P * (3.0f * u * t * t);
+            float3 grad_D = grad_P * (t * t * t);
+            float grad_r1 = -grad_SDF * u;
+            float grad_r2 = -grad_SDF * t;
+
+            atomicAdd3(grad_params + 0, grad_A);
+            atomicAdd3(grad_params + 3, grad_B);
+            atomicAdd3(grad_params + 6, grad_C);
+            atomicAdd3(grad_params + 9, grad_D);
+            atomicAdd(grad_params + 12, grad_r1);
+            atomicAdd(grad_params + 13, grad_r2);
+        }
 
         return -grad_v;
     }
@@ -1368,41 +1406,44 @@ struct BaseSDF<CATMULL_ROM>
         float3 P = point_catmull_rom(t, A, B, C, D);
         float3 v = P - pos;
         float3 grad_v = grad_SDF * 2.0f * v;
-        float3 grad_P = grad_v;
-        float3 grad_A = grad_P * (t * t * t);
-        float3 grad_B = grad_P * (t * t);
-        float3 grad_C = grad_P * t;
-        float3 grad_D = grad_P;
-        float3 grad_m1 = grad_A - grad_B * 2.0f + grad_C;
-        float3 grad_m2 = grad_A - grad_B;
 
-        float dm1_dp0 = t12 / (t01 + t12) - t12 / t01;
-        float dm1_dp1 = -1.0f + t12 / t01;
-        float dm1_dp2 = 1.0f - t12 / (t01 + t12);
-        float dm2_dp1 = -1.0f + t12 / (t12 + t23);
-        float dm2_dp2 = 1.0f - t12 / t23;
-        float dm2_dp3 = t12 / t23 - t12 / (t12 + t23);
-        float3 dm1_dt01 = t12 * ((p2 - p0) / ((t01 + t12) * (t01 + t12)) - (p1 - p0) / (t01 * t01));
-        float3 dm1_dt12 = (p1 - p0) / t01 + t12 * (p2 - p0) / ((t01 + t12) * (t01 + t12)) - (p2 - p0) / (t01 + t12);
-        float3 dm2_dt12 = (p2 - p1) / t23 + t12 * (p3 - p1) / ((t12 + t23) * (t12 + t23)) - (p3 - p1) / (t12 + t23);
-        float3 dm2_dt23 = t12 * ((p2 - p3) / (t23 * t23) + (p3 - p1) / ((t12 + t23) * (t12 + t23)));
-        float3 dt01_dp0p1 = p0p1 / (2.0f * pow(dot(p0p1, p0p1) + 1e-8f, 0.75f));
-        float3 dt12_dp1p2 = p1p2 / (2.0f * pow(dot(p1p2, p1p2) + 1e-8f, 0.75f));
-        float3 dt23_dp2p3 = p2p3 / (2.0f * pow(dot(p2p3, p2p3) + 1e-8f, 0.75f));
+        if (grad_params) {
+            float3 grad_P = grad_v;
+            float3 grad_A = grad_P * (t * t * t);
+            float3 grad_B = grad_P * (t * t);
+            float3 grad_C = grad_P * t;
+            float3 grad_D = grad_P;
+            float3 grad_m1 = grad_A - grad_B * 2.0f + grad_C;
+            float3 grad_m2 = grad_A - grad_B;
 
-        float3 grad_p0 = grad_m1 * (dm1_dp0 + dm1_dt01 * dt01_dp0p1);
-        float3 grad_p1 = grad_A * 2.0f + grad_B * -3.0f + grad_D + grad_m1 * (dm1_dp1 - dm1_dt01 * dt01_dp0p1 + dm1_dt12 * dt12_dp1p2) + grad_m2 * (dm2_dp1 + dm2_dt12 * dt12_dp1p2);
-        float3 grad_p2 = grad_A * -2.0f + grad_B * 3.0f + grad_m1 * (dm1_dp2 - dm1_dt12 * dt12_dp1p2) + grad_m2 * (dm2_dp2 - dm2_dt12 * dt12_dp1p2 + dm2_dt23 * dt23_dp2p3);
-        float3 grad_p3 = grad_m2 * (dm2_dp3 - dm2_dt23 * dt23_dp2p3);
-        atomicAdd3(grad_params + 0, grad_p0);
-        atomicAdd3(grad_params + 3, grad_p1);
-        atomicAdd3(grad_params + 6, grad_p2);
-        atomicAdd3(grad_params + 9, grad_p3);
+            float dm1_dp0 = t12 / (t01 + t12) - t12 / t01;
+            float dm1_dp1 = -1.0f + t12 / t01;
+            float dm1_dp2 = 1.0f - t12 / (t01 + t12);
+            float dm2_dp1 = -1.0f + t12 / (t12 + t23);
+            float dm2_dp2 = 1.0f - t12 / t23;
+            float dm2_dp3 = t12 / t23 - t12 / (t12 + t23);
+            float3 dm1_dt01 = t12 * ((p2 - p0) / ((t01 + t12) * (t01 + t12)) - (p1 - p0) / (t01 * t01));
+            float3 dm1_dt12 = (p1 - p0) / t01 + t12 * (p2 - p0) / ((t01 + t12) * (t01 + t12)) - (p2 - p0) / (t01 + t12);
+            float3 dm2_dt12 = (p2 - p1) / t23 + t12 * (p3 - p1) / ((t12 + t23) * (t12 + t23)) - (p3 - p1) / (t12 + t23);
+            float3 dm2_dt23 = t12 * ((p2 - p3) / (t23 * t23) + (p3 - p1) / ((t12 + t23) * (t12 + t23)));
+            float3 dt01_dp0p1 = p0p1 / (2.0f * pow(dot(p0p1, p0p1) + 1e-8f, 0.75f));
+            float3 dt12_dp1p2 = p1p2 / (2.0f * pow(dot(p1p2, p1p2) + 1e-8f, 0.75f));
+            float3 dt23_dp2p3 = p2p3 / (2.0f * pow(dot(p2p3, p2p3) + 1e-8f, 0.75f));
 
-        float grad_r1 = -grad_SDF * (1.0f - t);
-        float grad_r2 = -grad_SDF * t;
-        atomicAdd(grad_params + 12, grad_r1);
-        atomicAdd(grad_params + 13, grad_r2);
+            float3 grad_p0 = grad_m1 * (dm1_dp0 + dm1_dt01 * dt01_dp0p1);
+            float3 grad_p1 = grad_A * 2.0f + grad_B * -3.0f + grad_D + grad_m1 * (dm1_dp1 - dm1_dt01 * dt01_dp0p1 + dm1_dt12 * dt12_dp1p2) + grad_m2 * (dm2_dp1 + dm2_dt12 * dt12_dp1p2);
+            float3 grad_p2 = grad_A * -2.0f + grad_B * 3.0f + grad_m1 * (dm1_dp2 - dm1_dt12 * dt12_dp1p2) + grad_m2 * (dm2_dp2 - dm2_dt12 * dt12_dp1p2 + dm2_dt23 * dt23_dp2p3);
+            float3 grad_p3 = grad_m2 * (dm2_dp3 - dm2_dt23 * dt23_dp2p3);
+            atomicAdd3(grad_params + 0, grad_p0);
+            atomicAdd3(grad_params + 3, grad_p1);
+            atomicAdd3(grad_params + 6, grad_p2);
+            atomicAdd3(grad_params + 9, grad_p3);
+
+            float grad_r1 = -grad_SDF * (1.0f - t);
+            float grad_r2 = -grad_SDF * t;
+            atomicAdd(grad_params + 12, grad_r1);
+            atomicAdd(grad_params + 13, grad_r2);
+        }
 
         return -grad_v;
     }

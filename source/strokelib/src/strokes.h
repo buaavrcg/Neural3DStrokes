@@ -16,13 +16,15 @@ void stroke_forward(at::Tensor alpha_output,
                     at::Tensor sdf_output,
                     at::Tensor texcoord_output,
                     const at::Tensor x,
+                    const at::Tensor radius,
                     const at::Tensor viewdir,
                     const at::Tensor shape_params,
                     const at::Tensor color_params,
                     const uint32_t sdf_id,
                     const uint32_t color_id,
                     const float sdf_delta,
-                    const bool use_laplace_transform);
+                    const bool use_laplace_transform,
+                    const bool inv_scale_radius);
 
 // grad_shape_params: [N_Strokes, N_ShapeParams], float
 // grad_color_params: [N_Strokes, N_ColorParams], float
@@ -40,6 +42,7 @@ void stroke_backward(at::Tensor grad_shape_params,
                      const at::Tensor grad_color,
                      const at::Tensor grad_sdf,
                      const at::Tensor x,
+                     const at::Tensor radius,
                      const at::Tensor viewdir,
                      const at::Tensor alpha,
                      const at::Tensor shape_params,
@@ -47,4 +50,5 @@ void stroke_backward(at::Tensor grad_shape_params,
                      const uint32_t sdf_id,
                      const uint32_t color_id,
                      const float sdf_delta,
-                     const bool use_laplace_transform);
+                     const bool use_laplace_transform,
+                     const bool inv_scale_radius);

@@ -188,13 +188,14 @@ class Model(nn.Module):
             tdist = s_to_t(sdist)
 
             # Cast our rays, by turning our distance intervals into Gaussians.
-            coords, ts = render.cast_rays(tdist, batch['origins'], batch['directions'])
+            coords, radius, ts = render.cast_rays(tdist, batch['origins'], batch['directions'], batch['radii'])
 
             # Push our Gaussians through one of our two MLPs.
             mlp = (self.prop if self.single_prop else
                    self.get_submodule(f'prop_mlp_{i_level}')) if is_prop else self.nerf
             ray_results = mlp(
                 coords,
+                radius,
                 viewdirs=batch['viewdirs'] if self.use_viewdirs else None,
             )
             if self.config.gradient_scaling:
@@ -245,7 +246,7 @@ class Model(nn.Module):
 
             # Compute errors for the first level sampling.
             if i_level == 0 or self.num_prop_samples == 0:
-                error_field_results = self.error_field(coords)
+                error_field_results = self.error_field(coords, radius)
                 error_weights = render.compute_alpha_weights(
                     error_field_results['density'],
                     tdist,
@@ -385,7 +386,7 @@ class MLP(nn.Module):
             raw_density += self.density_noise * torch.randn_like(raw_density)
         return raw_density, x, coords
 
-    def forward(self, coords, viewdirs=None, no_warp=False):
+    def forward(self, coords, radius, viewdirs=None, no_warp=False):
         """Evaluate the MLP.
 
         Args:
@@ -533,10 +534,10 @@ class StrokeField(nn.Module):
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
     density_scale: float = 20.  # The maximum density of the strokes.
-    sdf_delta: float = 0.3  # How much to dilate the sdf boundary.
-    sdf_delta_eval: float = 0.1  # If zero, use hard sdf bounds for eval.
-    sdf_delta_decay: float = 0.999  # Decay rate of sdf_delta for each step.
+    sdf_delta: float = 5.0  # How much to dilate the sdf boundary.
+    sdf_delta_eval: float = 1.0  # If zero, use hard sdf bounds for eval.
     use_laplace_transform: bool = False  # If True, use sigmoid for soft clamping.
+    inv_scale_radius: bool = True  # If True, inverse scale radius according to scaling.
     use_error_field: bool = True  # Use error field for new stroke initialization.
     use_shape_grads: bool = False  # If True, use shape gradients for new stroke initialization.
     shape_grad_ema: float = 0.99  # The ema factor for shape gradients.
@@ -653,7 +654,7 @@ class StrokeField(nn.Module):
         # Make sure the parameters are in the valid range.
         self.clip_params()
 
-    def predict_density(self, coords, viewdirs, no_warp=False):
+    def predict_density(self, coords, radius, viewdirs, no_warp=False):
         """Helper function to output density and rgb."""
         # Encode input positions
         coords = _warp_coords(self.warp_fn, coords, self.bbox_size, no_warp)
@@ -670,12 +671,14 @@ class StrokeField(nn.Module):
 
         # Compute alpha and color for each stroke.
         if self.training:
-            sdf_delta = max(self.sdf_delta * (self.sdf_delta_decay**stroke_step), self.sdf_delta_eval)
+            stroke_step_frac = min(max(stroke_step / self.max_num_strokes, 0), 1)
+            sdf_delta = self.sdf_delta * (1 - stroke_step_frac) + self.sdf_delta_eval * stroke_step_frac
         else:
             sdf_delta = self.sdf_delta_eval
         alphas, colors, sdfs, texcoords = self.stroke_fn(
-            coords, viewdirs, shape_params, color_params, sdf_delta, 
-            self.use_laplace_transform, True, self.stroke_texture is not None)
+            coords, radius, viewdirs, shape_params, color_params, sdf_delta, 
+            self.use_laplace_transform, self.inv_scale_radius, 
+            True, self.stroke_texture is not None)
 
         # Compute the fixed step strokes.
         if fixed_step > 0:
@@ -684,8 +687,9 @@ class StrokeField(nn.Module):
                 color_params_fixed = self.color_params[:fixed_step].detach()
                 density_params_fixed = self.density_params[:fixed_step].detach() * self.density_scale
                 alphas_fixed, colors_fixed, sdfs_fixed, texcoords_fixed = self.stroke_fn(
-                    coords, viewdirs, shape_params_fixed, color_params_fixed, sdf_delta,
-                    self.use_laplace_transform, True, self.stroke_texture is not None)
+                    coords, radius, viewdirs, shape_params_fixed, color_params_fixed, sdf_delta,
+                    self.use_laplace_transform, self.inv_scale_radius, 
+                    True, self.stroke_texture is not None)
             alphas = torch.cat([alphas_fixed, alphas], dim=-1)
             colors = torch.cat([colors_fixed, colors], dim=-2)
             if sdfs is not None:
@@ -703,7 +707,7 @@ class StrokeField(nn.Module):
 
         return density, color, coords
 
-    def forward(self, coords, viewdirs=None, no_warp=False):
+    def forward(self, coords, radius, viewdirs=None, no_warp=False):
         """Evaluate the stroke field.
 
         Args:
@@ -717,13 +721,13 @@ class StrokeField(nn.Module):
             normals: [..., 3], or None.
         """
         if self.disable_density_normals:
-            density, x, coords_warped = self.predict_density(coords, viewdirs, no_warp=no_warp)
+            density, x, coords_warped = self.predict_density(coords, radius, viewdirs, no_warp=no_warp)
             grad_density = None
             normals = None
         else:
             with torch.enable_grad():
                 coords.requires_grad_(True)
-                density, x, coords_warped = self.predict_density(coords, viewdirs, no_warp=no_warp)
+                density, x, coords_warped = self.predict_density(coords, radius, viewdirs, no_warp=no_warp)
                 d_output = torch.ones_like(density, requires_grad=False, device=density.device)
                 grad_density = torch.autograd.grad(outputs=density,
                                                    inputs=coords,
