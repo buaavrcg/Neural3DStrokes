@@ -534,7 +534,7 @@ class StrokeField(nn.Module):
     max_num_strokes: int = 500  # The maximum number of strokes.
     max_opt_strokes: int = 500  # The maximum number of strokes to optimize at the same time.
     density_scale: float = 20.  # The maximum density of the strokes.
-    sdf_delta: float = 5.0  # How much to dilate the sdf boundary.
+    sdf_delta: float = 7.0  # How much to dilate the sdf boundary.
     sdf_delta_eval: float = 1.0  # If zero, use hard sdf bounds for eval.
     use_laplace_transform: bool = False  # If True, use sigmoid for soft clamping.
     inv_scale_radius: bool = True  # If True, inverse scale radius according to scaling.
