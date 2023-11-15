@@ -1,6 +1,7 @@
 import cv2
 import torch
 import numpy as np
+import lpips
 from skimage.metrics import structural_similarity, peak_signal_noise_ratio
 
 
@@ -109,6 +110,19 @@ def color_correct(img, ref, num_iters=5, eps=0.5 / 255):
 
 class MetricHarness:
     """A helper class for evaluating several error metrics."""
+    def __init__(self, use_lpips=False):
+        if use_lpips:
+            self.lpips = lpips.LPIPS(net='alex')
+        else:
+            self.lpips = None
+        
+    def calc_lpips(self, rgb_pred, rgb_gt, data_range=255):
+        rgb_pred = torch.from_numpy(rgb_pred) / data_range
+        rgb_gt = torch.from_numpy(rgb_gt) / data_range
+        rgb_pred = (rgb_pred * 2 - 1).permute(2, 0, 1)
+        rgb_gt = (rgb_gt * 2 - 1).permute(2, 0, 1)
+        lpips = self.lpips(rgb_pred.unsqueeze(0), rgb_gt.unsqueeze(0))
+        return lpips.mean().item()
 
     def __call__(self, rgb_pred, rgb_gt, name_fn=lambda s: s):
         """Evaluate the error between a predicted rgb image and the true image."""
@@ -118,8 +132,11 @@ class MetricHarness:
         rgb_gt_gray = cv2.cvtColor(rgb_gt, cv2.COLOR_RGB2GRAY)
         psnr = float(peak_signal_noise_ratio(rgb_pred, rgb_gt, data_range=255))
         ssim = float(structural_similarity(rgb_pred_gray, rgb_gt_gray, data_range=255))
+        if self.lpips is not None:
+            lpips = float(self.calc_lpips(rgb_pred, rgb_gt, data_range=255))
 
-        return {
-            name_fn('psnr'): psnr,
-            name_fn('ssim'): ssim,
-        }
+        results = {name_fn('psnr'): psnr, name_fn('ssim'): ssim}
+        if self.lpips is not None:
+            results[name_fn('lpips')] = lpips
+            
+        return results

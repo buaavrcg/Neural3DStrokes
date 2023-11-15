@@ -7,6 +7,7 @@ Config.far = 1.0
 Config.factor = 8
 Config.train_render_every = 500
 Config.max_steps = 25000
+Config.checkpoint_every = 2500
 Config.data_loss_mult = 1.0
 Config.mask_loss_mult = 0.02
 Config.sinkhorn_loss_mult = 0.0

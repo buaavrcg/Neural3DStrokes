@@ -94,7 +94,7 @@ def main():
     model, dataloader = accelerator.prepare(model, dataloader)
 
     # metric handler
-    metric_harness = image_utils.MetricHarness()
+    metric_harness = image_utils.MetricHarness(use_lpips=True)
     
     last_step = 0
     out_dir = os.path.join(config.exp_path, 'path_renders' if config.render_path else 'test_preds')
@@ -103,8 +103,8 @@ def main():
         summary_writer = tensorboard.SummaryWriter(os.path.join(config.exp_path, 'eval'))
         
     # Use more samples for evaluation.
-    model.num_prop_samples *= config.eval_sample_multipler
-    model.num_nerf_samples *= config.eval_sample_multipler
+    model.num_prop_samples = int(model.num_prop_samples * config.eval_sample_multipler)
+    model.num_nerf_samples = int(model.num_nerf_samples * config.eval_sample_multipler)
     
     # Evaluation loop
     while True:

@@ -538,7 +538,9 @@ class StrokeField(nn.Module):
     sdf_delta_eval: float = 1.0  # If zero, use hard sdf bounds for eval.
     use_laplace_transform: bool = False  # If True, use sigmoid for soft clamping.
     inv_scale_radius: bool = True  # If True, inverse scale radius according to scaling.
+    no_adaptive_delta: bool = False  # If True, disable adaptive delta.
     use_error_field: bool = True  # Use error field for new stroke initialization.
+    reset_density: float = 0.01  # The density threshold to reset a existing stroke.
     use_shape_grads: bool = False  # If True, use shape gradients for new stroke initialization.
     shape_grad_ema: float = 0.99  # The ema factor for shape gradients.
     shape_split_update_rate: float = 0.05  # The update rate for shape gradients when spliting shapes.
@@ -595,7 +597,7 @@ class StrokeField(nn.Module):
             self.shape_params_grad.data.copy_(self.shape_params_grad.data * self.shape_grad_ema + 
                                               self.shape_params.grad.data * (1 - self.shape_grad_ema))
         # Check old strokes that should be reset
-        reset_indices = torch.nonzero(self.density_params[:prev_step] < 0.01).squeeze(1)
+        reset_indices = torch.nonzero(self.density_params[:prev_step] < self.reset_density).squeeze(1)
         num_resets = reset_indices.numel()
         # Update the stroke field if conditions are met
         if next_step - prev_step >= self.min_update_interval or (num_resets > 0 and 
@@ -720,6 +722,9 @@ class StrokeField(nn.Module):
             density: [...].
             normals: [..., 3], or None.
         """
+        if self.no_adaptive_delta:
+            radius = torch.full_like(radius, radius.mean())
+        
         if self.disable_density_normals:
             density, x, coords_warped = self.predict_density(coords, radius, viewdirs, no_warp=no_warp)
             grad_density = None
