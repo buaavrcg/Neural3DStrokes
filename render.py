@@ -18,7 +18,6 @@ from source import configs
 from source import datasets
 from source import checkpoints
 from source import vis
-from source.utils import training as train_utils
 from source.utils import misc
 
 
@@ -55,7 +54,7 @@ def create_videos(config, base_dir, out_dir, out_name, num_frames):
         print(f'Making video {video_file}...')
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        capture = cv2.VideoWriter(video_file, fourcc, config.render_video_fps, shape[:2])
+        capture = cv2.VideoWriter(video_file, fourcc, config.render_video_fps, (shape[1], shape[0]))
         for idx in range(num_frames):
             img_file = os.path.join(out_dir, f'{k}_{idx_to_str(idx)}.{file_ext}')
             if not misc.file_exists(img_file):
