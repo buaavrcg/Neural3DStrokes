@@ -13,7 +13,7 @@ from source.utils import render
 from source.utils import training as train_utils
 from source.gridencoder import GridEncoder
 from source.strokelib import get_stroke, compose_strokes
-from source.textures import get_stroke_texture
+from source import textures
 
 
 def _warp_coords(warp_fn, coords, bbox_size=2.0, no_warp=False):
@@ -569,7 +569,7 @@ class StrokeField(nn.Module):
                                            not config.fix_density_params)
         self.register_buffer('stroke_step', torch.tensor(0, dtype=torch.int32))
         self.register_buffer('shape_params_grad', torch.zeros(self.max_num_strokes, self.d_shape))
-        self.stroke_texture = get_stroke_texture(config)
+        self.stroke_texture = textures.get_stroke_texture(config)
         self.stroke_step_limit = None
         self.last_update_step = 0
 
@@ -587,17 +587,18 @@ class StrokeField(nn.Module):
     def step_update(self, cur_step, max_step, error_field):
         """Update the stroke field at the current step."""
         steps_per_stroke = max_step // self.max_num_strokes
-        assert steps_per_stroke >= 10, f'Too few steps per stroke: {steps_per_stroke}'
+        assert steps_per_stroke > 1, f'Too few steps per stroke: {steps_per_stroke}'
         train_frac = cur_step / (max_step - steps_per_stroke)
-        next_step = int(self.max_num_strokes * min(max(train_frac, 0.0), 1.0)**self.step_power)
-        next_step = min(next_step + self.init_num_strokes, self.max_num_strokes)
         prev_step = self.stroke_step.item()
+        next_step = int(self.max_num_strokes * min(max(train_frac, 0.0), 1.0)**self.step_power)
+        next_step = min(max(next_step + self.init_num_strokes, prev_step), self.max_num_strokes)
         # Track the expoential moving average of shape gradients
         if self.shape_params.grad is not None:
             self.shape_params_grad.data.copy_(self.shape_params_grad.data * self.shape_grad_ema + 
                                               self.shape_params.grad.data * (1 - self.shape_grad_ema))
         # Check old strokes that should be reset
-        reset_indices = torch.nonzero(self.density_params[:prev_step] < self.reset_density).squeeze(1)
+        reset_density = self.reset_density if self.density_params.requires_grad else -torch.inf
+        reset_indices = torch.nonzero(self.density_params[:prev_step] < reset_density).squeeze(1)
         num_resets = reset_indices.numel()
         # Update the stroke field if conditions are met
         if next_step - prev_step >= self.min_update_interval or (num_resets > 0 and 

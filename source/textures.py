@@ -1,4 +1,5 @@
 import abc
+import gin
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,8 +10,8 @@ from source.utils import misc
 def get_stroke_texture(config: configs.Config):
     if config.stroke_texture == 'none':
         return None
-    if config.stroke_texture == 'mask':
-        return MaskImageTexture(config.texture_image_path, config.texture_image_size)
+    if config.stroke_texture == 'image':
+        return ImageTexture(config.texture_image_path, config.texture_image_size)
     else:
         assert 0, f'Unknown stroke texture {config.stroke_texture}'
 
@@ -31,12 +32,16 @@ class StrokeTexture(nn.Module):
         raise NotImplementedError
     
 
-class MaskImageTexture(StrokeTexture):
+@gin.configurable
+class ImageTexture(StrokeTexture):
     modulate_alpha: bool = False  # Whether to modulate alpha with texture
-    tint_color: bool = False  # Whether to tint color with texture
+    tint_ratio: float = 1.0  # The amount of original color to tint with
     
-    def __init__(self, tint_image_path: str, texture_size: tuple[int, int]):
+    def __init__(self, tint_image_path: str, texture_size: tuple[int, int], **kwargs):
         super().__init__()
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+            
         image = torch.from_numpy(misc.load_img(tint_image_path))
         if image.ndim == 2:
             image = image.unsqueeze(-1)
@@ -69,10 +74,8 @@ class MaskImageTexture(StrokeTexture):
         # Interpolate between pure white and texture
         # tint = (1 - alphas.unsqueeze(1)) * tint + alphas.unsqueeze(1)
         
-        if self.tint_color:
-            colors = colors * tint
-        else:
-            colors = torch.ones_like(colors) * tint
+        colors = colors * self.tint_ratio + (1.0 - self.tint_ratio)
+        colors = colors * tint
         if self.modulate_alpha:
             alphas = alphas * tint.mean(-1)
         

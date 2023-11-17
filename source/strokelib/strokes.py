@@ -166,7 +166,7 @@ class _stroke_fn(Function):
         _backend.stroke_forward(alpha_output, color_output, sdf_output, texcoord_output, x, radius, 
                                 viewdir, shape_params, color_params, sdf_id, color_id, sdf_delta, 
                                 use_laplace_transform, inv_scale_radius)
-        if ctx.needs_input_grad[0] or ctx.needs_input_grad[2] or ctx.needs_input_grad[3]:
+        if ctx.needs_input_grad[0] or ctx.needs_input_grad[3] or ctx.needs_input_grad[4]:
             ctx.save_for_backward(x, radius, viewdir, alpha_output, shape_params, color_params)
             ctx.sdf_id = sdf_id
             ctx.color_id = color_id
@@ -189,8 +189,8 @@ class _stroke_fn(Function):
                  grad_color: torch.Tensor,
                  grad_sdf: torch.Tensor = None,
                  grad_texcoord: torch.Tensor = None):
-        if not ctx.needs_input_grad[0] and not ctx.needs_input_grad[2] and not ctx.needs_input_grad[3]:
-            return None, None, None, None, None, None, None, None, None
+        if not ctx.needs_input_grad[0] and not ctx.needs_input_grad[3] and not ctx.needs_input_grad[4]:
+            return None, None, None, None, None, None, None, None, None, None, None, None
         
         x, radius, viewdir, alpha_output, shape_params, color_params = ctx.saved_tensors
         num_strokes = shape_params.shape[0]

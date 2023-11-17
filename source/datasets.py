@@ -788,7 +788,7 @@ class Zeroshot(Dataset):
         return poses, thetas, phis, radius
         
     
-    def _circle_poses(self, size, radius=3.5, theta_range=[0, 20], phi_range=[0, 360]):
+    def _circle_poses(self, size, radius=4.0, theta_range=[0, 40], phi_range=[0, 360]):
         theta_range = np.deg2rad(np.array(theta_range))
         phi_range = np.deg2rad(np.array(phi_range))
         
@@ -827,7 +827,7 @@ class Zeroshot(Dataset):
         if self.split == DataSplit.TRAIN:
             poses, thetas, phis, radius = self._rand_poses(500000)
         else:
-            poses, thetas, phis, radius = self._circle_poses(200)
+            poses, thetas, phis, radius = self._circle_poses(100)
         self.camtoworlds = poses
         self.polar = thetas
         self.azimuth = phis

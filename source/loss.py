@@ -445,6 +445,7 @@ class StyleLoss(nn.Module):
         target_image = misc.load_img(config.style_target_image) / 255.
         target_image = torch.from_numpy(target_image).permute(2, 0, 1).unsqueeze(0).to(device)
         self.gram_targets = self.get_gram_matrices(target_image, detach=True)
+        print(f'Loaded style image: {config.style_target_image}')
     
     def get_gram_matrices(self, image, detach=False):
         image = (image - self.mean) / self.std
