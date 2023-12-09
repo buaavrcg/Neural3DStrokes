@@ -16,8 +16,9 @@ Config.lr_final = 0.0005
 Config.train_sample_multipler_init = 0.25
 Config.train_sample_final_frac = 0.8
 
-# Config.load_checkpoint = 'exp/lego_16_record_step/checkpoints'
-# Config.style_target_image = 'style_examples/scream.jpg'
+# Uncomment this part to apply color transfer
+# Config.load_checkpoint = ''
+# Config.style_target_image = 'style_examples/sky.jpg'
 # Config.style_transfer_shape = True
 # Config.fix_shape_params = True
 # Config.fix_color_params = True

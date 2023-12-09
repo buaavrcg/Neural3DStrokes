@@ -36,11 +36,6 @@ StrokeField.init_num_strokes = 20
 StrokeField.sdf_delta = 20.0
 StrokeField.sdf_delta_eval = 4.0
 
-# Original (no inv scale)
-# StrokeField.inv_scale_radius = False
-# StrokeField.sdf_delta = 150.0
-# StrokeField.sdf_delta_eval = 50.0
-
 MLP.bbox_size = 2.0
 MLP.warp_fn = None
 

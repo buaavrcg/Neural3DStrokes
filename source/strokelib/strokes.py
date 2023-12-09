@@ -45,6 +45,7 @@ _sdf_dict = {
     'aabb': ('unit_cube', [], None, True, False, False, True),
     'obb': ('unit_cube', [], None, True, True, False, True),
     'roundcube': ('unit_round_cube', [(0, 1)], lambda _: 0.8 * torch.rand(1), True, True, True, False),
+    'roundbox': ('unit_round_cube', [(0, 1)], lambda _: 0.8 * torch.rand(1), True, True, False, True),
     'cappedtorus':
     ('unit_capped_torus', [(0, 2 * torch.acos(torch.tensor(0.0))),
                            (0, None)], lambda _: torch.rand(2), True, True, True, False),

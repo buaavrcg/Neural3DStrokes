@@ -123,7 +123,7 @@ class Config:
     # Render configs
     render_progressive_strokes: bool = False  # If True, render strokes progressively.
     render_progressive_sample_multipler: float = 12.  # Multiplier for the number of samples.
-    render_progressive_render_chunk_size_divisor: int = 16  # Divisor for render chunk size.
+    render_progressive_render_chunk_size_divisor: int = 8  # Divisor for render chunk size.
     render_factor: int = 1  # The downsample factor of rendered images, -1 for not used.
     render_video_fps: int = 30  # Framerate in frames-per-second.
     render_video_crf: int = 18  # Constant rate factor for ffmpeg video quality.
