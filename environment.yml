@@ -1,4 +1,4 @@
-name: paintnesf
+name: n3dstrokes
 channels:
   - pytorch
   - nvidia
