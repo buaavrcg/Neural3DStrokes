@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>PaintNeSF: Artistic Creation of Stylized Scenes with Vectorized 3D Strokes</h1>
+<h1>Neural 3D Strokes: Creating Stylized 3D Scenes with Vectorized 3D Strokes</h1>
 
 <div>
     <a href='' target='_blank'>Hao-Bin Duan<sup>1</sup></a>&emsp;
@@ -14,21 +14,21 @@
     <sup>3</sup>Department of Computer Science, University of Bath
 </div>
 <div>
-    <a href='https://arxiv.org/abs/2311.15637'>arxiv 2023</a>
+    <a href='https://arxiv.org/abs/2311.15637'>CVPR 2024</a>
 </div>
 <div>
 
 <a target="_blank" href="https://arxiv.org/abs/2311.15637">
   <img src="https://img.shields.io/badge/arXiv-2311.15637-b31b1b.svg" alt="arXiv Paper"/>
 </a>
-<a href="https://hits.seeyoufarm.com"><img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fbuaavrcg%2FPaintNeSF&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false"/></a>
+<a href="https://hits.seeyoufarm.com"><img src="https://hits.seeyoufarm.com/api/count/incr/badge.svg?url=https%3A%2F%2Fgithub.com%2Fbuaavrcg%2FNeural3DStrokes&count_bg=%2379C83D&title_bg=%23555555&icon=&icon_color=%23E7E7E7&title=hits&edge_flat=false"/></a>
 </div>
 
 
 <h4>TL;DR</h4>
-<h5>PaintNeSF generates stylized 3D scenes with vectorized 3D strokes. <br> Our method learns a vectorized stroke field instead of MLP-based implicit representation to represent a 3D scene. We construct a palette of 3D strokes based on geometric primitives and spline curves.</h5>
+<h5>Neural 3D Strokes generate stylized 3D scenes with vectorized 3D strokes. <br> Our method learns a vectorized stroke field instead of MLP-based implicit representation to represent a 3D scene. We construct a palette of 3D strokes based on geometric primitives and spline curves.</h5>
 
-### [Paper](https://arxiv.org/abs/2311.15637) | [Project Page](https://buaavrcg.github.io/PaintNeSF)
+### [Paper](https://arxiv.org/abs/2311.15637) | [Project Page](https://buaavrcg.github.io/Neural3DStrokes)
 
 <br>
 
@@ -50,12 +50,12 @@
 We highly recommend using [Anaconda](https://www.anaconda.com/) to manage your python environment. You can setup the required environment by the following commands:
 ```bash
 # clone this repo
-git clone https://github.com/buaavrcg/PaintNeSF
-cd PaintNeSF
+git clone https://github.com/buaavrcg/Neural3DStrokes
+cd Neural3DStrokes
 
 # install python dependencies
 conda env create -f environment.yml
-conda activate paintnesf
+conda activate n3dstrokes
 ```
 
 Dependent CUDA code is compiled on the fly when you run it for the first time.
@@ -161,10 +161,10 @@ bash scripts/local_colmap_and_resize.sh ${DATA_DIR}
 
 ## Citation
 ```
-@misc{duan2023paintnesf,
-      title={PaintNeSF: Artistic Creation of Stylized Scenes with Vectorized 3D Strokes}, 
+@misc{duan2024neural,
+      title={Neural 3D Strokes: Creating Stylized 3D Scenes with Vectorized 3D Strokes}, 
       author={Hao-Bin Duan and Miao Wang and Yan-Xun Li and Yong-Liang Yang},
-      year={2023},
+      year={2024},
       eprint={2311.15637},
       archivePrefix={arXiv},
       primaryClass={cs.CV}
