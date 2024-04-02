@@ -78,20 +78,20 @@ DATA_DIR=data/nerf_synthetic/lego
 EXP_NAME=lego
 
 # Experiment will be conducted under "exp/${EXP_NAME}" folder
-# "--gin_configs=configs/blender.gin" can be seen as a default config 
-# and you can add specific config useing --gin_bindings="..." 
+# "-c configs/blender.gin" can be seen as a default config 
+# and you can add specific config using -p "..." 
 accelerate launch train.py \
-    --gin_configs=configs/blender.gin \
-    --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
-    --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-    --gin_bindings="Config.factor = 4"
+    -c configs/blender.gin \
+    -p "Config.data_dir = '${DATA_DIR}'" \
+    -p "Config.exp_name = '${EXP_NAME}'" \
+    -p "Config.factor = 4"
 
 # or you can also run without accelerate (without DDP)
 CUDA_VISIBLE_DEVICES=0 python train.py \
-    --gin_configs=configs/blender.gin \
-    --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
-    --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-    --gin_bindings="Config.factor = 4"
+    -c configs/blender.gin \
+    -p "Config.data_dir = '${DATA_DIR}'" \
+    -p "Config.exp_name = '${EXP_NAME}'" \
+    -p "Config.factor = 4"
 
 # alternatively you can use an example training script for blender scenes
 bash scripts/train_blender.sh
@@ -106,24 +106,24 @@ tensorboard --logdir "exp/${EXP_NAME}"
 Rendering results can be found in the directory `exp/${EXP_NAME}/render`
 ```
 accelerate launch render.py \
-    --gin_configs=configs/blender.gin \
-    --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
-    --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-    --gin_bindings="Config.render_path = True" \
-    --gin_bindings="Config.render_path_frames = 480" \
-    --gin_bindings="Config.render_video_fps = 60" \
-    --gin_bindings="Config.factor = 4"  
+    -c configs/blender.gin \
+    -p "Config.data_dir = '${DATA_DIR}'" \
+    -p "Config.exp_name = '${EXP_NAME}'" \
+    -p "Config.render_path = True" \
+    -p "Config.render_path_frames = 480" \
+    -p "Config.render_video_fps = 60" \
+    -p "Config.factor = 4"  
 
 # to render the stroke-by-stroke results, set "Config.render_progressive_strokes=True"
 accelerate launch render.py \
-    --gin_configs=configs/blender.gin \
-    --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
-    --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-    --gin_bindings="Config.render_path = True" \
-    --gin_bindings="Config.render_path_frames = 480" \
-    --gin_bindings="Config.render_video_fps = 60" \
-    --gin_bindings="Config.factor = 4" \
-    --gin_bindings="Config.render_progressive_strokes=True"
+    -c configs/blender.gin \
+    -p "Config.data_dir = '${DATA_DIR}'" \
+    -p "Config.exp_name = '${EXP_NAME}'" \
+    -p "Config.render_path = True" \
+    -p "Config.render_path_frames = 480" \
+    -p "Config.render_video_fps = 60" \
+    -p "Config.factor = 4" \
+    -p "Config.render_progressive_strokes=True"
 
 # alternatively you can use an example rendering script 
 bash scripts/render_blender.sh
@@ -135,10 +135,10 @@ Evaluating results can be found in the directory `exp/${EXP_NAME}/test_preds`
 ```
 # using the same exp_name as in training
 accelerate launch eval.py \
-    --gin_configs=configs/360.gin \
-    --gin_bindings="Config.data_dir = '${DATA_DIR}'" \
-    --gin_bindings="Config.exp_name = '${EXP_NAME}'" \
-    --gin_bindings="Config.factor = 4"
+    -c configs/360.gin \
+    -p "Config.data_dir = '${DATA_DIR}'" \
+    -p "Config.exp_name = '${EXP_NAME}'" \
+    -p "Config.factor = 4"
 
 
 # alternatively you can use an example evaluating script 
@@ -148,8 +148,8 @@ bash scripts/eval_llff.sh
 
 ## OutOfMemory
 you can decrease the total batch size by 
-adding e.g.  `--gin_bindings="Config.batch_size = 8192" `, 
-or decrease the test chunk size by adding e.g.  `--gin_bindings="Config.render_chunk_size = 8192" `,
+adding e.g.  `-p "Config.batch_size = 8192"`, 
+or decrease the test chunk size by adding e.g.  `-p "Config.render_chunk_size = 8192"`,
 or use more GPU by configure `accelerate config` .
 
 ## Preparing custom data
